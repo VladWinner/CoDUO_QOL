@@ -15,11 +15,17 @@
 
 #include "structs.h"
 
+#include <filesystem>
+#include <fstream>
+#include "nlohmann/json.hpp"
+
 #define SCREEN_WIDTH        640
 #define SCREEN_HEIGHT       480
 
 static std::vector<std::unique_ptr<SafetyHookInline>> g_inlineHooks;
 static std::vector<std::unique_ptr<SafetyHookMid>> g_midHooks;
+
+
 
 template<typename T, typename Fn>
 SafetyHookInline* CreateInlineHook(T target, Fn destination, SafetyHookInline::Flags flags = SafetyHookInline::Default) {
@@ -68,6 +74,7 @@ Cvar_GetT Cvar_Get = (Cvar_GetT)NULL;
 cvar_t* cg_fovscale;
 cvar_t* cg_fovfixaspectratio;
 cvar_t* safeArea_horizontal;
+cvar_t* r_noborder;
 void codDLLhooks(HMODULE handle);
 
 typedef HMODULE(__cdecl* LoadsDLLsT)(const char* a1, FARPROC* a2, int a3);
@@ -114,6 +121,26 @@ COD_Classic_Version COD_SP = {
 
 COD_Classic_Version *LoadedGame = NULL;
 
+uintptr_t cg_game_offset = 0;
+
+#define CGAME_OFF(x) (cg_game_offset + (x - 0x30000000))
+#define GAME_OFF(x) (game_mp + (x - 0x20000000))
+
+uintptr_t cg(uintptr_t CODUOSP, uintptr_t CODUOMP = 0) {
+
+    uintptr_t result = 0;
+
+    if (LoadedGame == &COD_SP) {
+        result = CODUOMP;
+    }
+    else result = CODUOSP;
+
+    if (result >= 0x30000000) {
+        result = CGAME_OFF(result);
+    }
+    return result;
+
+}
 
 SafetyHookInline* CG_GetViewFov_og_S{};
 constexpr auto STANDARD_ASPECT = 1.33333333333f;
@@ -140,26 +167,28 @@ double GetAspectRatio_standardfix() {
 
 double CG_GetViewFov_hook() {
     double fov = CG_GetViewFov_og_S->call<double>();
-
     if (cg_fovscale && cg_fovscale->value) {
+        double halfFovRad = (fov / 2.0) * (M_PI / 180.0); // Convert to radians
+        double tanHalfFov = tan(halfFovRad);
+
         if (cg_fovfixaspectratio && cg_fovfixaspectratio->integer) {
             // Convert horizontal FOV to vertical, then back to horizontal with new aspect ratio
-            double halfFovRad = (fov / 2.0) * (M_PI / 180.0); // Convert to radians
-            double tanHalfFov = tan(halfFovRad);
-
             // Convert to vertical FOV (aspect-independent)
             double tanHalfVFov = tanHalfFov / STANDARD_ASPECT;
-
+            // Apply fovscale to the tangent
+            tanHalfVFov *= cg_fovscale->value;
             // Convert back to horizontal FOV with current aspect ratio
             double newTanHalfFov = tanHalfVFov * GetAspectRatio();
-
             // Convert back to degrees
             fov = 2.0 * atan(newTanHalfFov) * (180.0 / M_PI);
         }
-
-        fov = fov * cg_fovscale->value;
+        else {
+            // Apply fovscale to the tangent directly
+            tanHalfFov *= cg_fovscale->value;
+            // Convert back to degrees
+            fov = 2.0 * atan(tanHalfFov) * (180.0 / M_PI);
+        }
     }
-
     return fov;
 }
 
@@ -277,7 +306,7 @@ double process_width(double width = 0) {
 }
 
 int process_width(int width) {
-    return (int)process_width((int)0);
+    return (int)process_width((double)0.f);
 }
 
 SafetyHookInline LoadLibraryD;
@@ -436,10 +465,27 @@ int __stdcall glOrtho_detour(double left, double right, double bottom, double to
     return glOrtho_og.unsafe_stdcall<int>(left, right, bottom, top, zNear, zFar);
 }
 
+uintptr_t InsideWinMain;
+
+void __cdecl sub_431CA0(void* unk) {
+    cdecl_call<void>(InsideWinMain, unk);
+    cg_fovscale = Cvar_Get((char*)"cg_fovscale", "1.0", CVAR_ARCHIVE);
+    cg_fovfixaspectratio = Cvar_Get((char*)"cg_fovfixaspectratio", "1.0", CVAR_ARCHIVE);
+    safeArea_horizontal = Cvar_Get((char*)"safeArea_horizontal", "1.0", CVAR_ARCHIVE);
+    r_noborder = Cvar_Get((char*)"r_noborder", "1", CVAR_ARCHIVE);
+
+}
+void LoadMenuConfigs();
 void InitHook() {
+    MessageBoxW(NULL, L"INIT START", L"Error", MB_OK | MB_ICONWARNING);
     if(!CheckGame())
     return;
     SetUpFunctions();
+    LoadMenuConfigs();
+
+    if (cg(1)) {
+        Memory::VP::InterceptCall(0x00455176, InsideWinMain, sub_431CA0);
+    }
 
     //Memory::VP::InjectHook(0x00411757, Con_DrawConsole);
 
@@ -449,9 +495,7 @@ void InitHook() {
 
     if (Cvar_Get != NULL) 
     {
-        cg_fovscale = Cvar_Get((char*)"cg_fovscale", "1.0", CVAR_ARCHIVE);
-        cg_fovfixaspectratio = Cvar_Get((char*)"cg_fovfixaspectratio", "1.0", CVAR_ARCHIVE);
-        safeArea_horizontal = Cvar_Get((char*)"safeArea_horizontal", "1.0", CVAR_ARCHIVE);
+
 
         //Memory::VP::InjectHook(0x4D7D90, glviewport_47BD978);
 
@@ -493,6 +537,22 @@ void InitHook() {
     //    return;
     //}
 
+    if (cg(1)) {
+        static auto borderless_hook1 = safetyhook::create_mid(0x00502F87, [](SafetyHookContext& ctx) {
+            auto& cdsFullScreen = ctx.esi;
+            if (r_noborder && r_noborder->integer) {
+                printf("fuckwit\n");
+                cdsFullScreen = false;
+                DWORD& dwStylea = *(DWORD*)(ctx.esp + 0x54);
+                DWORD& dwExStylea = *(DWORD*)(ctx.esp + 0x50);
+                dwExStylea = 0;
+                dwStylea = WS_POPUP | WS_SYSMENU;
+                ctx.eip = 0x00502FC0;
+            }
+
+            });
+    }
+
     std::thread([&]() {
         while (!glOrtho_og.target_address()) {
             if (*(uintptr_t*)LoadedGame->GL_Ortho_ptr) {
@@ -505,7 +565,7 @@ void InitHook() {
         }
         }).detach();
 
-    MessageBoxW(NULL, L"FAILED TO ENABLE", L"Error", MB_OK | MB_ICONERROR);
+
 }
 
 
@@ -642,14 +702,206 @@ void RestoreItemState(itemDef_t* item, const AlignmentState* state) {
     }
 }
 
+
 // ============================================================================
-// HOOK FUNCTION
+// JSON CONFIGURATION STRUCTURE
+// ============================================================================
+struct Alignment {
+    uint32_t h_left : 1;
+    uint32_t h_right : 1;
+    uint32_t h_center : 1;
+    uint32_t v_top : 1;
+    uint32_t v_bottom : 1;
+    uint32_t v_center : 1;
+    uint32_t _unused : 26;  // Padding to 32 bits
+};
+
+struct MenuConfig {
+    std::string menuName;
+    Alignment alignment;
+};
+
+// Global storage for all menu configs
+std::vector<MenuConfig> g_menuConfigs;
+
+// ============================================================================
+// JSON PARSING - SUPPORTS MULTIPLE MENUS PER FILE
+// ============================================================================
+
+Alignment ParseAlignment(const std::string& alignStr) {
+    Alignment align = { 0 };
+
+    if (alignStr == "[LEFT]") {
+        align.h_left = 1;
+    }
+    else if (alignStr == "[RIGHT]") {
+        align.h_right = 1;
+    }
+    else if (alignStr == "[CENTER]") {
+        align.h_center = 1;
+        align.v_center = 1;
+    }
+    else if (alignStr == "[LB]") {
+        align.h_left = 1;
+        align.v_bottom = 1;
+    }
+    else if (alignStr == "[LT]") {
+        align.h_left = 1;
+        align.v_top = 1;
+    }
+    else if (alignStr == "[RB]") {
+        align.h_right = 1;
+        align.v_bottom = 1;
+    }
+    else if (alignStr == "[RT]") {
+        align.h_right = 1;
+        align.v_top = 1;
+    }
+    else if (alignStr == "[TOP]") {
+        align.v_top = 1;
+    }
+    else if (alignStr == "[BOTTOM]") {
+        align.v_bottom = 1;
+    }
+
+    return align;
+}
+
+void LoadMenuConfigs() {
+    char modulePath[MAX_PATH];
+    GetModuleFileNameA(NULL, modulePath, MAX_PATH);
+
+    std::filesystem::path exePath(modulePath);
+    std::filesystem::path menuwideDir = exePath.parent_path() / "menuwide";
+
+    if (!std::filesystem::exists(menuwideDir)) {
+        printf("menuwide directory not found: %s\n", menuwideDir.string().c_str());
+        return;
+    }
+
+    printf("Loading menu configs from: %s\n", menuwideDir.string().c_str());
+
+    for (const auto& entry : std::filesystem::directory_iterator(menuwideDir)) {
+        if (entry.path().extension() != ".json") continue;
+
+        try {
+            std::ifstream file(entry.path());
+            nlohmann::json j = nlohmann::json::parse(file);
+
+            if (j.is_array()) {
+                for (const auto& menuJson : j) {
+                    MenuConfig config;
+                    config.menuName = menuJson["menuName"].get<std::string>();
+                    config.alignment = ParseAlignment(menuJson["alignment"].get<std::string>());
+
+                    g_menuConfigs.push_back(config);
+                    printf("Loaded config for menu '%s'\n", config.menuName.c_str());
+                }
+            }
+            else {
+                MenuConfig config;
+                config.menuName = j["menuName"].get<std::string>();
+                config.alignment = ParseAlignment(j["alignment"].get<std::string>());
+
+                g_menuConfigs.push_back(config);
+                printf("Loaded config for menu '%s'\n", config.menuName.c_str());
+            }
+        }
+        catch (const std::exception& e) {
+            printf("Failed to parse %s: %s\n",
+                entry.path().string().c_str(), e.what());
+        }
+    }
+}
+
+// ============================================================================
+// LOOKUP FUNCTIONS
+// ============================================================================
+const MenuConfig* FindMenuConfig(const char* menuName) {
+    if (!menuName) return nullptr;
+
+    for (const auto& config : g_menuConfigs) {
+        if (config.menuName == menuName) {
+            return &config;
+        }
+    }
+
+    return nullptr;
+}
+
+// ============================================================================
+// ALIGNMENT PROCESSING - JSON VERSION
+// ============================================================================
+bool ProcessItemAlignment_FromJSON(itemDef_t* item, const char* menuName,
+    AlignmentState* state) {
+    if (!menuName) return false;
+
+    state->originalText = item->text;
+    state->originalRect = item->window.rect;
+    state->wasModified = false;
+
+    const MenuConfig* config = FindMenuConfig(menuName);
+    if (!config) return false;
+
+    float halfWidth = process_width() * 0.5f;
+    float safeX = get_safeArea_horizontal();
+
+    // Apply horizontal alignment
+    if (config->alignment.h_left) {
+        item->window.rect.x += (-halfWidth) * safeX;
+        state->wasModified = true;
+    }
+    else if (config->alignment.h_right) {
+        item->window.rect.x += (halfWidth)*safeX;
+        state->wasModified = true;
+    }
+    else if (config->alignment.h_center) {
+        // No X adjustment for center
+        state->wasModified = true;
+    }
+
+    // Apply vertical alignment (when process_height is available)
+    if (config->alignment.v_top) {
+        // TODO: item->window.rect.y += (-halfHeight) * safeY;
+        state->wasModified = true;
+    }
+    else if (config->alignment.v_bottom) {
+        // TODO: item->window.rect.y += (halfHeight) * safeY;
+        state->wasModified = true;
+    }
+    else if (config->alignment.v_center) {
+        // No Y adjustment for center
+        state->wasModified = true;
+    }
+
+    return state->wasModified;
+}
+
+// ============================================================================
+// UPDATED HOOK FUNCTION
 // ============================================================================
 void __fastcall Item_Paint_Hook(itemDef_t* item) {
+    char textBuffer[1024];
     AlignmentState state = { 0 };
 
-    // Process alignment
-    ProcessItemAlignment(item, nullptr, 0, &state);
+    const char* menuName = nullptr;
+
+    // Get menu name
+    if (item->parent) {
+        menuDef_t* menu = (menuDef_t*)item->parent;
+        if (menu && menu->window.name) {
+            menuName = menu->window.name;
+            printf("menuName %s\n", menuName);
+        }
+    }
+
+    // Try JSON-based alignment first (applies to entire menu)
+    bool processedFromJSON = ProcessItemAlignment_FromJSON(item, menuName, &state);
+
+    // If not found in JSON, fall back to text marker processing (per-item)
+    if (!processedFromJSON) {
+        ProcessItemAlignment(item, textBuffer, sizeof(textBuffer), &state);
+    }
 
     // Call original render
     Item_Paint->unsafe_thiscall(item);
@@ -657,28 +909,6 @@ void __fastcall Item_Paint_Hook(itemDef_t* item) {
     // Restore original state
     RestoreItemState(item, &state);
 }
-
-uintptr_t cg_game_offset = 0;
-
-#define CGAME_OFF(x) (cg_game_offset + (x - 0x30000000))
-#define GAME_OFF(x) (game_mp + (x - 0x20000000))
-
-uintptr_t cg(uintptr_t CODUOSP, uintptr_t CODUOMP = 0) {
-
-    uintptr_t result = 0;
-
-    if (LoadedGame == &COD_SP) {
-        result = CODUOMP;
-    }
-    else result = CODUOSP;
-
-    if (result >= 0x30000000) {
-        result = CGAME_OFF(result);
-    }
-    return result;
-
-}
-
 
 
 void codDLLhooks(HMODULE handle) {
@@ -725,10 +955,14 @@ void codDLLhooks(HMODULE handle) {
 
     if (cg(1, 0)) {
         static auto DrawObjectives = CreateMidHook(OFFSET + 0x12900, [](SafetyHookContext& ctx) {
-            float halfWidth = process_width() * 0.5f;
-            float safeX = get_safeArea_horizontal();
+            auto menuConfig = FindMenuConfig("Compass");
+            if (menuConfig && menuConfig->alignment.h_left) {
 
-            ctx.ecx -= halfWidth * get_safeArea_horizontal();
+                float halfWidth = process_width() * 0.5f;
+                float safeX = get_safeArea_horizontal();
+
+                ctx.ecx -= halfWidth * get_safeArea_horizontal();
+            }
 
             });
     }
@@ -787,8 +1021,8 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     switch (ul_reason_for_call)
     {
     case DLL_PROCESS_ATTACH:
-        InitHook();
         OpenConsole();
+        InitHook();
         //CheckModule();
         HMODULE moduleHandle;
         // idk why but this makes it not DETATCH prematurely

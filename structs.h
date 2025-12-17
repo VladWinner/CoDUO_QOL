@@ -5,6 +5,16 @@
 // ENUMS AND DEFINES
 // ============================================================================
 
+#define MAX_MENUNAME 32
+#define MAX_ITEMTEXT 64
+#define MAX_ITEMACTION 64
+#define MAX_MENUDEFFILE 4096
+#define MAX_MENUFILE 32768
+#define MAX_MENUS 64
+#define MAX_MENUITEMS 256
+#define MAX_COLOR_RANGES 10
+#define MAX_OPEN_MENUS 16
+
 // Item types
 #define ITEM_TYPE_TEXT              0   // Simple text
 #define ITEM_TYPE_BUTTON            1   // Button control
@@ -164,6 +174,28 @@ typedef struct itemDef_s {
     int cursorPos;                       // 4 bytes (0x22C-0x22F) - cursor position in characters
     void* typeData;                      // 4 bytes (0x230-0x233) - type specific data ptr's
 } itemDef_t;
+
+typedef struct {
+    windowDef_t window;
+    const char* font;              // font
+    qboolean fullScreen;            // covers entire screen
+    int itemCount;                  // number of items;
+    int fontIndex;                  //
+    int cursorItem;                 // which item as the cursor
+    int fadeCycle;                  //
+    float fadeClamp;                //
+    float fadeAmount;               //
+    const char* onOpen;             // run when the menu is first opened
+    const char* onClose;            // run when the menu is closed
+    const char* onESC;              // run when the menu is closed
+    const char* onKey[255];         // NERVE - SMF - execs commands when a key is pressed
+    const char* soundName;          // background loop sound for menu
+    const char* onROQDone;          //----(SA)	added.  callback for roqs played from menus
+
+    vec4_t focusColor;              // focus color for items
+    vec4_t disableColor;            // focus color for items
+    itemDef_t* items[MAX_MENUITEMS]; // items this menu contains
+} menuDef_t;
 
 // ============================================================================
 // TYPE-SPECIFIC DATA STRUCTURES
