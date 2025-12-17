@@ -253,3 +253,67 @@ typedef struct {
     int         fps;
     int         frame;
 } modelDef_t;
+struct color {
+    int8_t r;
+    int8_t g;
+    int8_t b;
+    int8_t a;
+};
+
+union hudelem_color_t
+{
+    color unnamed_field;
+    int32_t rgba;
+};
+
+enum alignx_e : unsigned __int32
+{
+    ALIGNX_LEFT = 0,
+    ALIGNX_CENTER = 1,
+    ALIGNX_RIGHT = 2
+};
+
+enum aligny_e : unsigned __int32
+{
+    ALIGNY_TOP = 0,
+    ALIGNY_MIDDLE = 1,
+    ALIGNY_BOTTOM = 2
+};
+
+
+struct hudelem_s
+{
+    int32_t type;
+    int32_t x;
+    int32_t y;
+    int32_t z;
+    int32_t fontScale;
+    alignx_e alignx;
+    aligny_e aligny;
+    int32_t font;
+    //int32_t alignScreen;
+    hudelem_color_t color;
+    int32_t fromColor;
+    uint32_t fadeStartTime;
+    uint32_t fadeTime;
+    int32_t label;
+    uint32_t width;
+    int32_t height;
+    uint32_t materialIndex;
+    uint32_t fromWidth;
+    int32_t fromHeight;
+    uint32_t scaleStartTime;
+    uint32_t scaleTime;
+    int32_t fromX;
+    int32_t fromY;
+    int32_t fromAlignOrg;
+    //int32_t fromAlignScreen;
+    uint32_t moveStartTime;
+    uint32_t moveTime;
+    uint32_t time;
+    int32_t duration;
+    int32_t value;
+    char text[4];
+    int32_t sort;
+    int32_t foreground;
+};

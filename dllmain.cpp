@@ -150,13 +150,13 @@ void OpenConsole()
     freopen("CONOUT$", "w", stdout);
     freopen("CONIN$", "r", stdin);
     std::cout << "Console initialized.\n";
-    printf("hi");
+    printf("Oh,Hi Mark\n");
 }
 float GetAspectRatio() {
     float x = (float)*(int*)LoadedGame->X_res_Addr;
     float y = (float)*(int*)(LoadedGame->X_res_Addr + 0x4);
 
-    printf("aspect ratio %f\n", x / y);
+    //printf("aspect ratio %f\n", x / y);
 
     return x / y;
 }
@@ -371,6 +371,11 @@ BOOL __stdcall FreeLibraryHook(HMODULE hLibModule) {
 }
 
 float get_safeArea_horizontal() {
+
+    float printing = safeArea_horizontal != 0 ? safeArea_horizontal->value : 1.f;
+
+    printf("SafeArea cvar ptr %p %f\n", safeArea_horizontal, printing);
+
     if (!safeArea_horizontal)
         return 1.f;
     return std::clamp(safeArea_horizontal->value, 0.f, 1.f);
@@ -467,24 +472,46 @@ int __stdcall glOrtho_detour(double left, double right, double bottom, double to
 
 uintptr_t InsideWinMain;
 
-void __cdecl sub_431CA0(void* unk) {
-    cdecl_call<void>(InsideWinMain, unk);
+void sub_431CA0(SafetyHookContext& ctx) {
+
+    int& size_cvars = *(int*)0x4805EC0;
+
+    printf("winmain cvar hooks cvar_get ptr %p size %d\n", Cvar_Get, size_cvars);
     cg_fovscale = Cvar_Get((char*)"cg_fovscale", "1.0", CVAR_ARCHIVE);
     cg_fovfixaspectratio = Cvar_Get((char*)"cg_fovfixaspectratio", "1.0", CVAR_ARCHIVE);
     safeArea_horizontal = Cvar_Get((char*)"safeArea_horizontal", "1.0", CVAR_ARCHIVE);
+    printf("safearea ptr return %p size after %d\n", safeArea_horizontal, size_cvars);
     r_noborder = Cvar_Get((char*)"r_noborder", "1", CVAR_ARCHIVE);
 
 }
 void LoadMenuConfigs();
 void InitHook() {
-    MessageBoxW(NULL, L"INIT START", L"Error", MB_OK | MB_ICONWARNING);
-    if(!CheckGame())
-    return;
+
+    if (!CheckGame()) {
+        MessageBoxW(NULL, L"COD CLASSIC LOAD FAILED", L"Error", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    char buffer[128]{};
+    const char* buffertosee = "UNKNOWN";
+    if (LoadedGame == &COD_UO_SP) {
+        buffertosee = "COD_UO_SP";
+    }
+    else if (LoadedGame == &COD_SP) {
+        buffertosee = "COD_UO_MP";
+    }
+
+    sprintf_s(buffer, sizeof(buffer), "INIT START %s", buffertosee);
+    MessageBoxA(NULL, buffer, "Error", MB_OK | MB_ICONWARNING);
+
     SetUpFunctions();
     LoadMenuConfigs();
-
+    printf("should call the cg func\n");
     if (cg(1)) {
-        Memory::VP::InterceptCall(0x00455176, InsideWinMain, sub_431CA0);
+        printf("doing the winmain hook\n");
+        //Memory::VP::InterceptCall(0x00455176, InsideWinMain, sub_431CA0);
+
+        static auto AfterCvars = safetyhook::create_mid(0x0045517B, sub_431CA0);
+
     }
 
     //Memory::VP::InjectHook(0x00411757, Con_DrawConsole);
@@ -537,21 +564,21 @@ void InitHook() {
     //    return;
     //}
 
-    if (cg(1)) {
-        static auto borderless_hook1 = safetyhook::create_mid(0x00502F87, [](SafetyHookContext& ctx) {
-            auto& cdsFullScreen = ctx.esi;
-            if (r_noborder && r_noborder->integer) {
-                printf("fuckwit\n");
-                cdsFullScreen = false;
-                DWORD& dwStylea = *(DWORD*)(ctx.esp + 0x54);
-                DWORD& dwExStylea = *(DWORD*)(ctx.esp + 0x50);
-                dwExStylea = 0;
-                dwStylea = WS_POPUP | WS_SYSMENU;
-                ctx.eip = 0x00502FC0;
-            }
+    //if (cg(1)) {
+    //    static auto borderless_hook1 = safetyhook::create_mid(0x00502F87, [](SafetyHookContext& ctx) {
+    //        auto& cdsFullScreen = ctx.esi;
+    //        if (r_noborder && r_noborder->integer) {
+    //            printf("fuckwit\n");
+    //            cdsFullScreen = false;
+    //            DWORD& dwStylea = *(DWORD*)(ctx.esp + 0x54);
+    //            DWORD& dwExStylea = *(DWORD*)(ctx.esp + 0x50);
+    //            dwExStylea = 0;
+    //            dwStylea = WS_POPUP | WS_SYSMENU;
+    //            ctx.eip = 0x00502FC0;
+    //        }
 
-            });
-    }
+    //        });
+    //}
 
     std::thread([&]() {
         while (!glOrtho_og.target_address()) {
@@ -643,6 +670,7 @@ SafetyHookInline* Item_Paint{};
 #define ALIGN_RIGHT         "[RIGHT]"
 #define ALIGN_TOP           "[TOP]"
 #define ALIGN_BOTTOM        "[BOTTOM]"
+#define ALIGN_STRETCH       "[STRETCH]"
 
 // ============================================================================
 // ALIGNMENT PROCESSING FUNCTION
@@ -713,7 +741,8 @@ struct Alignment {
     uint32_t v_top : 1;
     uint32_t v_bottom : 1;
     uint32_t v_center : 1;
-    uint32_t _unused : 26;  // Padding to 32 bits
+    uint32_t stretch : 1;   // For stretch behavior
+    uint32_t _unused : 25;  // Padding to 32 bits
 };
 
 struct MenuConfig {
@@ -731,37 +760,40 @@ std::vector<MenuConfig> g_menuConfigs;
 Alignment ParseAlignment(const std::string& alignStr) {
     Alignment align = { 0 };
 
-    if (alignStr == "[LEFT]") {
+    if (alignStr == ALIGN_LEFT) {
         align.h_left = 1;
     }
-    else if (alignStr == "[RIGHT]") {
+    else if (alignStr == ALIGN_RIGHT) {
         align.h_right = 1;
     }
-    else if (alignStr == "[CENTER]") {
+    else if (alignStr == ALIGN_CENTER) {
         align.h_center = 1;
         align.v_center = 1;
     }
-    else if (alignStr == "[LB]") {
+    else if (alignStr == ALIGN_LEFT_BOTTOM) {
         align.h_left = 1;
         align.v_bottom = 1;
     }
-    else if (alignStr == "[LT]") {
+    else if (alignStr == ALIGN_LEFT_TOP) {
         align.h_left = 1;
         align.v_top = 1;
     }
-    else if (alignStr == "[RB]") {
+    else if (alignStr == ALIGN_RIGHT_BOTTOM) {
         align.h_right = 1;
         align.v_bottom = 1;
     }
-    else if (alignStr == "[RT]") {
+    else if (alignStr == ALIGN_RIGHT_TOP) {
         align.h_right = 1;
         align.v_top = 1;
     }
-    else if (alignStr == "[TOP]") {
+    else if (alignStr == ALIGN_TOP) {
         align.v_top = 1;
     }
-    else if (alignStr == "[BOTTOM]") {
+    else if (alignStr == ALIGN_BOTTOM) {
         align.v_bottom = 1;
+    }
+    else if (alignStr == ALIGN_STRETCH) {
+        align.stretch = 1;
     }
 
     return align;
@@ -783,6 +815,11 @@ void LoadMenuConfigs() {
 
     for (const auto& entry : std::filesystem::directory_iterator(menuwideDir)) {
         if (entry.path().extension() != ".json") continue;
+
+        if (entry.path().filename() == "_hudelem_shaders.json") {
+            printf("Skipping _hudelem_shaders.json (handled separately)\n");
+            continue;
+        }
 
         try {
             std::ifstream file(entry.path());
@@ -891,7 +928,7 @@ void __fastcall Item_Paint_Hook(itemDef_t* item) {
         menuDef_t* menu = (menuDef_t*)item->parent;
         if (menu && menu->window.name) {
             menuName = menu->window.name;
-            printf("menuName %s\n", menuName);
+            //printf("menuName %s\n", menuName);
         }
     }
 
@@ -908,6 +945,160 @@ void __fastcall Item_Paint_Hook(itemDef_t* item) {
 
     // Restore original state
     RestoreItemState(item, &state);
+}
+
+
+uintptr_t DrawSingleHudElem2dog = 0;
+
+struct HudAlignmentState {
+    alignx_e originalAlignX;
+    aligny_e originalAlignY;
+    float originalX;
+    float originalY;
+    bool wasModified;
+};
+
+void ProcessHudElemAlignment(hudelem_s* hud, HudAlignmentState* state) {
+    if (!hud) return;
+
+    // Save original state
+    state->originalAlignX = hud->alignx;
+    state->originalAlignY = hud->aligny;
+    state->originalX = (float)hud->x;
+    state->originalY = (float)hud->y;
+    state->wasModified = false;
+
+    float halfWidth = process_width() * 0.5f;
+    float safeX = get_safeArea_horizontal();
+    // float halfHeight = process_height() * 0.5f;
+    // float safeY = get_safeArea_vertical();
+
+    // Process horizontal alignment (alignx)
+    switch (hud->alignx) {
+    case ALIGNX_LEFT:
+        hud->x += (int32_t)((-halfWidth) * safeX);
+        state->wasModified = true;
+        break;
+
+    case ALIGNX_RIGHT:
+        hud->x += (int32_t)((halfWidth)*safeX);
+        state->wasModified = true;
+        break;
+
+    case ALIGNX_CENTER:
+        // No X adjustment for center
+        state->wasModified = true;
+        break;
+    }
+
+    switch (hud->aligny) {
+    case ALIGNY_TOP:
+        // hud->y += (int32_t)((-halfHeight) * safeY);
+        state->wasModified = true;
+        break;
+
+    case ALIGNY_BOTTOM:
+        // hud->y += (int32_t)((halfHeight) * safeY);
+        state->wasModified = true;
+        break;
+
+    case ALIGNY_MIDDLE:
+        // No Y adjustment for middle
+        state->wasModified = true;
+        break;
+    }
+}
+
+void RestoreHudElemState(hudelem_s* hud, const HudAlignmentState* state) {
+    if (state->wasModified) {
+        hud->alignx = state->originalAlignX;
+        hud->aligny = state->originalAlignY;
+        hud->x = (int32_t)state->originalX;
+        hud->y = (int32_t)state->originalY;
+    }
+}
+
+// ============================================================================
+// UPDATED HOOK FUNCTION
+// ============================================================================
+
+int __fastcall DrawSingleHudElem2dHook(hudelem_s* thisa) {
+    HudAlignmentState state = { };
+
+    if (thisa) {
+        printf("type? %d x %d y %d alignx %d aligny %d\n",
+            thisa->type, thisa->x, thisa->y,
+            thisa->alignx, thisa->aligny);
+
+        // Process alignment adjustments
+        ProcessHudElemAlignment(thisa, &state);
+    }
+
+    // Call original render
+    auto result = thiscall_call<int>(DrawSingleHudElem2dog, thisa);
+
+    // Restore original state
+    if (thisa) {
+        RestoreHudElemState(thisa, &state);
+    }
+
+    return result;
+}
+
+struct HudShaderConfig {
+    std::string shaderName;
+    Alignment alignment;
+};
+
+// Global storage for shader configs
+std::vector<HudShaderConfig> g_hudShaderConfigs;
+
+void LoadHudShaderConfigs() {
+    char modulePath[MAX_PATH];
+    GetModuleFileNameA(NULL, modulePath, MAX_PATH);
+
+    std::filesystem::path exePath(modulePath);
+    std::filesystem::path configPath = exePath.parent_path() / "menuwide" / "_hudelem_shaders.json";
+
+    if (!std::filesystem::exists(configPath)) {
+        printf("_hudelem_shaders.json not found: %s\n", configPath.string().c_str());
+        return;
+    }
+
+    printf("Loading HUD shader configs from: %s\n", configPath.string().c_str());
+
+    try {
+        std::ifstream file(configPath);
+        nlohmann::json j = nlohmann::json::parse(file);
+
+        if (j.is_array()) {
+            for (const auto& shaderJson : j) {
+                HudShaderConfig config;
+                config.shaderName = shaderJson["shaderName"].get<std::string>();
+                config.alignment = ParseAlignment(shaderJson["alignment"].get<std::string>());
+
+                g_hudShaderConfigs.push_back(config);
+                printf("Loaded shader config for '%s' (stretch: %d)\n",
+                    config.shaderName.c_str(), config.alignment.stretch);
+            }
+        }
+    }
+    catch (const std::exception& e) {
+        printf("Failed to parse _hudelem_shaders.json: %s\n", e.what());
+    }
+}
+
+
+const HudShaderConfig* FindHudShaderConfig(const char* shaderName) {
+    if (!shaderName) return nullptr;
+
+    for (const auto& config : g_hudShaderConfigs) {
+        if (config.shaderName == shaderName) {
+            return &config;
+        }
+    }
+
+    return nullptr;
 }
 
 
@@ -976,37 +1167,55 @@ void codDLLhooks(HMODULE handle) {
     //}
 
     //DrawHudElemMaterial_mid.reset();
-    DrawHudElemMaterial_mid = CreateMidHook(cg(0x3001F8D4,0x3002A26C), [](SafetyHookContext& ctx) {
+
+    if (cg(0x3001FB14)) {
+        Memory::VP::InterceptCall(cg(0x3001FB14), DrawSingleHudElem2dog, DrawSingleHudElem2dHook);
+    }
+
+    DrawHudElemMaterial_mid = CreateMidHook(cg(0x3001F8D4, 0x3002A26C), [](SafetyHookContext& ctx) {
 
         const char* hud_elem_shader_name = (const char*)(ctx.esp + 0x1C);
 
-        if (strcmp(hud_elem_shader_name, "black") == 0) {
+        // Check if shader has a config
+        const HudShaderConfig* shaderConfig = FindHudShaderConfig(hud_elem_shader_name);
 
+        // Hardcoded "black" OR config with stretch flag set
+        bool shouldStretch = (strcmp(hud_elem_shader_name, "black") == 0) ||
+            (shaderConfig && shaderConfig->alignment.stretch);
 
+        if (shouldStretch) {
             float* x = (float*)(ctx.esi);
-
             float& y = *(float*)(ctx.esp + 0x10);
-
             float& width = *(float*)(ctx.esp + 0x18);
             float& height = *(float*)(ctx.esp + 0x14);
 
             *x += -process_width();
 
-            //printf("width %f, height %f before\n", width, height);
-
-            //height = width * GetAspectRatio_standardfix();
-
             static float fuckthis[2]{};
-
             width += fuckthis[0];
             height += fuckthis[1];
 
-            //height = 360;
-
             width *= (GetAspectRatio_standardfix() * 2.f);
-            /*printf("width %f, height %f after %p\n", width, height,fuckthis);*/
         }
+        // Apply alignment-based adjustments from config
+        else if (shaderConfig) {
+            float* x = (float*)(ctx.esi);
+            float& y = *(float*)(ctx.esp + 0x10);
 
+            float halfWidth = process_width() * 0.5f;
+            float safeX = get_safeArea_horizontal();
+
+            if (shaderConfig->alignment.h_left) {
+                *x += (-halfWidth) * safeX;
+            }
+            else if (shaderConfig->alignment.h_right) {
+                *x += (halfWidth)*safeX;
+            }
+
+            // Add vertical when ready
+            // if (shaderConfig->alignment.v_top) { ... }
+            // if (shaderConfig->alignment.v_bottom) { ... }
+        }
 
         });
     
