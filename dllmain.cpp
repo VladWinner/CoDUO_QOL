@@ -80,6 +80,10 @@ struct COD_Classic_Version {
     DWORD DLL_CG_GetViewFov_offset;
     DWORD Cvar_Get_Addr;
     DWORD X_res_Addr;
+    DWORD GL_Ortho_ptr;
+    DWORD gl_ortho_ret;
+    DWORD Item_Paint;
+    DWORD CG_DrawFlashImage_Draw;
 };
 
 COD_Classic_Version COD_UO_SP = {
@@ -89,15 +93,23 @@ COD_Classic_Version COD_UO_SP = {
 0x2CC20,
 0x004337F0,
 0x047BE104,
+0x47BCF98,
+0x004D7E02,
+0x43EE0,
+0x122BB,
 };
 
 COD_Classic_Version COD_SP = {
-{0x00452D60,0x83EC8B55},
-"cgamex86.dll",
+{0x0046C5C0,0x83EC8B55},
+"uo_cgame_mp_x86.dll",
 0x452190,
-0x25200,
-0x004319F0,
-0x015347C4,
+0x3FFC0,
+0x43D9E0,
+0x0489A0A4,
+0x4898F38,
+0x004BF2B2,
+0x58250,
+0x1A96B,
 };
 
 COD_Classic_Version *LoadedGame = NULL;
@@ -274,7 +286,7 @@ HMODULE __stdcall LoadLibraryHook(const char* filename) {
 
     auto hModule = LoadLibraryD.unsafe_stdcall<HMODULE>(filename);
 
-    if (strstr(filename, "cgame") != NULL) {
+    if (strstr(filename, LoadedGame->DLLName) != NULL) {
         codDLLhooks(hModule);
     }
 
@@ -332,7 +344,7 @@ BOOL __stdcall FreeLibraryHook(HMODULE hLibModule) {
 float get_safeArea_horizontal() {
     if (!safeArea_horizontal)
         return 1.f;
-    return std::clamp(safeArea_horizontal->value, 0.1f, 1.f);
+    return std::clamp(safeArea_horizontal->value, 0.f, 1.f);
 }
 
 void Con_DrawConsole() {
@@ -341,12 +353,95 @@ void Con_DrawConsole() {
 
 }
 
+SafetyHookInline glOrtho_og{};
+//
+//
+//
+struct OrthoParams {
+    double left;
+    double right;
+    double bottom;
+    double top;
+    double zNear;
+    double zFar;
+};
+//
+//SafetyHookInline qglViewport_og{};
+//
+//void __stdcall qglViewport_detour(int x,
+//    int y,
+//    unsigned int width,
+//    unsigned int height) {
+//
+//    if (_ReturnAddress() == (void*)0x4D7D96) {
+//        x = 240;
+//        width = 1440;
+//    }
+//    qglViewport_og.unsafe_stdcall(x, y, width, height);
+//};
+//
+//
+//SafetyHookInline qglScissor_og{};
+//
+//void __stdcall qglScisso_detour(int x,
+//    int y,
+//    unsigned int width,
+//    unsigned int height) {
+//
+//    if (_ReturnAddress() == (void*)0x004D7DAD) {
+//        x = 240;
+//        width = 1440;
+//    }
+//    qglScissor_og.unsafe_stdcall(x, y, width, height);
+//};
+
+int __stdcall glOrtho_detour(double left, double right, double bottom, double top, double zNear, double zFar) {
+    static OrthoParams params = { 0, 0, 0, 0, 0, 0 };
+
+    //printf("glOrtho called from: %p\n", _ReturnAddress());
+    //printf("  left   = %.2f (addr: %p)\n", params.left, &params.left);
+    //printf("  right  = %.2f (addr: %p)\n", params.right, &params.right);
+    //printf("  bottom = %.2f (addr: %p)\n", params.bottom, &params.bottom);
+    //printf("  top    = %.2f (addr: %p)\n", params.top, &params.top);
+    //printf("  zNear  = %.2f (addr: %p)\n", params.zNear, &params.zNear);
+    //printf("  zFar   = %.2f (addr: %p)\n", params.zFar, &params.zFar);
+
+    if (_ReturnAddress() == (void*)LoadedGame->gl_ortho_ret) {
+        //printf("glOrtho called from: %p\n", _ReturnAddress());
+        //printf("  left   = %.2f (addr: %p)\n", left, &left);
+        //printf("  right  = %.2f (addr: %p)\n", right, &right);
+        //printf("  bottom = %.2f (addr: %p)\n", bottom, &bottom);
+        //printf("  top    = %.2f (addr: %p)\n", top, &top);
+        //printf("  zNear  = %.2f (addr: %p)\n", zNear, &zNear);
+        //printf("  zFar   = %.2f (addr: %p)\n", zFar, &zFar);
+        static float floatsy[2];
+        //left -= process_width(0.f) + floatsy[0];
+        //right += process_width(0.f) + floatsy[1];
+
+        left -= process_widths() + floatsy[0];
+        right += process_widths() + floatsy[1];
+
+        /*printf("left %f right %f floatsy %p\n",left,right, floatsy);*/
+
+        return glOrtho_og.unsafe_stdcall<int>(
+            left + params.left,
+            right + params.right,
+            bottom + params.bottom,
+            top + params.top,
+            zNear + params.zNear,
+            zFar + params.zFar
+        );
+    }
+
+    return glOrtho_og.unsafe_stdcall<int>(left, right, bottom, top, zNear, zFar);
+}
+
 void InitHook() {
     if(!CheckGame())
     return;
     SetUpFunctions();
 
-    Memory::VP::InjectHook(0x00411757, Con_DrawConsole);
+    //Memory::VP::InjectHook(0x00411757, Con_DrawConsole);
 
     LoadLibraryD = safetyhook::create_inline(LoadLibraryA, LoadLibraryHook);
 
@@ -398,91 +493,22 @@ void InitHook() {
     //    return;
     //}
 
+    std::thread([&]() {
+        while (!glOrtho_og.target_address()) {
+            if (*(uintptr_t*)LoadedGame->GL_Ortho_ptr) {
+                glOrtho_og = safetyhook::create_inline(
+                    *(uintptr_t*)LoadedGame->GL_Ortho_ptr,
+                    &glOrtho_detour
+                );
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        }).detach();
+
     MessageBoxW(NULL, L"FAILED TO ENABLE", L"Error", MB_OK | MB_ICONERROR);
 }
 
-SafetyHookInline glOrtho_og{};
 
-
-
-struct OrthoParams {
-    double left;
-    double right;
-    double bottom;
-    double top;
-    double zNear;
-    double zFar;
-};
-
-SafetyHookInline qglViewport_og{};
-
-void __stdcall qglViewport_detour(int x,
-    int y,
-    unsigned int width,
-    unsigned int height) {
-
-    if (_ReturnAddress() == (void*)0x4D7D96) {
-        x = 240;
-        width = 1440;
-    }
-    qglViewport_og.unsafe_stdcall(x, y, width, height);
-};
-
-
-SafetyHookInline qglScissor_og{};
-
-void __stdcall qglScisso_detour(int x,
-    int y,
-    unsigned int width,
-    unsigned int height) {
-
-    if (_ReturnAddress() == (void*)0x004D7DAD) {
-        x = 240;
-        width = 1440;
-    }
-    qglScissor_og.unsafe_stdcall(x, y, width, height);
-};
-
-int __stdcall glOrtho_detour(double left, double right, double bottom, double top, double zNear, double zFar) {
-    static OrthoParams params = { 0, 0, 0, 0, 0, 0 };
-
-    //printf("glOrtho called from: %p\n", _ReturnAddress());
-    //printf("  left   = %.2f (addr: %p)\n", params.left, &params.left);
-    //printf("  right  = %.2f (addr: %p)\n", params.right, &params.right);
-    //printf("  bottom = %.2f (addr: %p)\n", params.bottom, &params.bottom);
-    //printf("  top    = %.2f (addr: %p)\n", params.top, &params.top);
-    //printf("  zNear  = %.2f (addr: %p)\n", params.zNear, &params.zNear);
-    //printf("  zFar   = %.2f (addr: %p)\n", params.zFar, &params.zFar);
-
-    if (_ReturnAddress() == (void*)0x004D7E02) {
-        //printf("glOrtho called from: %p\n", _ReturnAddress());
-        //printf("  left   = %.2f (addr: %p)\n", left, &left);
-        //printf("  right  = %.2f (addr: %p)\n", right, &right);
-        //printf("  bottom = %.2f (addr: %p)\n", bottom, &bottom);
-        //printf("  top    = %.2f (addr: %p)\n", top, &top);
-        //printf("  zNear  = %.2f (addr: %p)\n", zNear, &zNear);
-        //printf("  zFar   = %.2f (addr: %p)\n", zFar, &zFar);
-        static float floatsy[2];
-        //left -= process_width(0.f) + floatsy[0];
-        //right += process_width(0.f) + floatsy[1];
-
-        left -= process_widths() +  floatsy[0];
-        right += process_widths() + floatsy[1];
-
-        /*printf("left %f right %f floatsy %p\n",left,right, floatsy);*/
-
-        return glOrtho_og.unsafe_stdcall<int>(
-            left + params.left,
-            right + params.right,
-            bottom + params.bottom,
-            top + params.top,
-            zNear + params.zNear,
-            zFar + params.zFar
-        );
-    }
-
-    return glOrtho_og.unsafe_stdcall<int>(left, right, bottom, top, zNear, zFar);
-}
 
 SafetyHookMid* DrawHudElemMaterial_mid{};
 
@@ -632,38 +658,62 @@ void __fastcall Item_Paint_Hook(itemDef_t* item) {
     RestoreItemState(item, &state);
 }
 
+uintptr_t cg_game_offset = 0;
+
+#define CGAME_OFF(x) (cg_game_offset + (x - 0x30000000))
+#define GAME_OFF(x) (game_mp + (x - 0x20000000))
+
+uintptr_t cg(uintptr_t CODUOSP, uintptr_t CODUOMP = 0) {
+
+    uintptr_t result = 0;
+
+    if (LoadedGame == &COD_SP) {
+        result = CODUOMP;
+    }
+    else result = CODUOSP;
+
+    if (result >= 0x30000000) {
+        result = CGAME_OFF(result);
+    }
+    return result;
+
+}
+
+
+
 void codDLLhooks(HMODULE handle) {
    // printf("run");
     uintptr_t OFFSET = (uintptr_t)handle;
+    cg_game_offset = OFFSET;
     //printf("HANDLE : 0x%p ADDR : 0x%p \n", handle, OFFSET + 0x2CC20);
     //CG_GetViewFov_og_S.reset();
 
-    static auto blur_test = safetyhook::create_mid(0x4D9926, [](SafetyHookContext& ctx) {
+    //static auto blur_test = safetyhook::create_mid(0x4D9926, [](SafetyHookContext& ctx) {
 
-        static int fuck[6]{};
-        printf("fuck %p\n", fuck);
-        *(int*)(ctx.esp) += fuck[0];
+    //    static int fuck[6]{};
+    //    printf("fuck %p\n", fuck);
+    //    *(int*)(ctx.esp) += fuck[0];
 
-        *(int*)(ctx.esp + 0x4) += fuck[1];
-        *(int*)(ctx.esp + 0x4 + 0x4) += fuck[2];
+    //    *(int*)(ctx.esp + 0x4) += fuck[1];
+    //    *(int*)(ctx.esp + 0x4 + 0x4) += fuck[2];
 
-        *(int*)(ctx.esp + 0x4 + 0x4 + 0x4) += fuck[3];
-        });
+    //    *(int*)(ctx.esp + 0x4 + 0x4 + 0x4) += fuck[3];
+    //    });
 
-    Memory::VP::InterceptCall(OFFSET + 0x122BB, DrawStretch_og, DrawStretch_300135B0);
-    Memory::VP::InterceptCall(OFFSET + 0x1221A, DrawStretch_og, DrawStretch_300135B0);
+    Memory::VP::InterceptCall(OFFSET + LoadedGame->CG_DrawFlashImage_Draw, DrawStretch_og, DrawStretch_300135B0);
+    Memory::VP::InterceptCall(cg(0x3001221A,0x3001A8CF), DrawStretch_og, DrawStretch_300135B0);
 
-    Memory::VP::InterceptCall(OFFSET + 0x11F68, crosshair_render_func, crosshair_render_hook);
+    //Memory::VP::InterceptCall(OFFSET + 0x11F68, crosshair_render_func, crosshair_render_hook);
 
-    Memory::VP::InterceptCall(OFFSET + 0x11222, trap_R_DrawStretchPic, R_DrawStretchPic_leftsniper);
+    Memory::VP::InterceptCall(cg(0x30011222,0x30019752), trap_R_DrawStretchPic, R_DrawStretchPic_leftsniper);
 
-    Memory::VP::InterceptCall(OFFSET + 0x11270, trap_R_DrawStretchPic, R_DrawStretchPic_rightsniper);
+    Memory::VP::InterceptCall(cg(0x30011270,0x300197A0), trap_R_DrawStretchPic, R_DrawStretchPic_rightsniper);
 
-    Memory::VP::Nop(OFFSET + 0x11205, 2);
+    Memory::VP::Nop(cg(0x30011205,0x30019735), 2);
 
-    Memory::VP::Nop(OFFSET + 0x11247, 2);
+    Memory::VP::Nop(cg(0x30011247,0x30019777), 2);
 
-    CG_DrawPicAddr = OFFSET + 0x13B70;
+    CG_DrawPicAddr = cg(0x30013B70,0x3001CAA0);
 
     CG_GetViewFov_og_S = CreateInlineHook(OFFSET + LoadedGame->DLL_CG_GetViewFov_offset, &CG_GetViewFov_hook);
         //if (MH_CreateHook((void**)OFFSET + 0x2CC20, &CG_GetViewFov_hook, (void**)&CG_GetViewFov_og) != MH_OK) {
@@ -671,30 +721,28 @@ void codDLLhooks(HMODULE handle) {
         //    return;
         //}
 
-    Item_Paint = CreateInlineHook(OFFSET + 0x43EE0, Item_Paint_Hook);
+    Item_Paint = CreateInlineHook(OFFSET + LoadedGame->Item_Paint, Item_Paint_Hook);
 
-    static auto DrawObjectives = CreateMidHook(OFFSET + 0x12900, [](SafetyHookContext& ctx) {
-        float halfWidth = process_width() * 0.5f;
-        float safeX = get_safeArea_horizontal();
+    if (cg(1, 0)) {
+        static auto DrawObjectives = CreateMidHook(OFFSET + 0x12900, [](SafetyHookContext& ctx) {
+            float halfWidth = process_width() * 0.5f;
+            float safeX = get_safeArea_horizontal();
 
-        ctx.ecx -= halfWidth * get_safeArea_horizontal();
+            ctx.ecx -= halfWidth * get_safeArea_horizontal();
 
-        });
-
-    if (*(uintptr_t*)0x047BCF98 && !glOrtho_og.target_address()) {
-        glOrtho_og = safetyhook::create_inline(*(uintptr_t*)0x047BCF98, &glOrtho_detour);
+            });
     }
 
-    if (*(uintptr_t*)0x47BD978 && !qglViewport_og.target_address()) {
-        //qglViewport_og = safetyhook::create_inline(*(uintptr_t*)0x047BD978, &qglViewport_detour);
-    }
+    //if (*(uintptr_t*)0x47BD978 && !qglViewport_og.target_address()) {
+    //    //qglViewport_og = safetyhook::create_inline(*(uintptr_t*)0x047BD978, &qglViewport_detour);
+    //}
 
-    if (*(uintptr_t*)0x47BD718 && !qglScissor_og.target_address()) {
-        //qglScissor_og = safetyhook::create_inline(*(uintptr_t*)0x47BD718, &qglScisso_detour);
-    }
+    //if (*(uintptr_t*)0x47BD718 && !qglScissor_og.target_address()) {
+    //    //qglScissor_og = safetyhook::create_inline(*(uintptr_t*)0x47BD718, &qglScisso_detour);
+    //}
 
     //DrawHudElemMaterial_mid.reset();
-    DrawHudElemMaterial_mid = CreateMidHook(OFFSET + 0x1F8D4, [](SafetyHookContext& ctx) {
+    DrawHudElemMaterial_mid = CreateMidHook(cg(0x3001F8D4,0x3002A26C), [](SafetyHookContext& ctx) {
 
         const char* hud_elem_shader_name = (const char*)(ctx.esp + 0x1C);
 
@@ -721,7 +769,7 @@ void codDLLhooks(HMODULE handle) {
 
             //height = 360;
 
-            width *= (GetAspectRatio_standardfix() * 1.25f);
+            width *= (GetAspectRatio_standardfix() * 2.f);
             /*printf("width %f, height %f after %p\n", width, height,fuckthis);*/
         }
 
