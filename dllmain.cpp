@@ -80,6 +80,13 @@ void codDLLhooks(HMODULE handle);
 typedef HMODULE(__cdecl* LoadsDLLsT)(const char* a1, FARPROC* a2, int a3);
 LoadsDLLsT originalLoadDLL = nullptr;
 
+enum COD_GAME {
+    UNSUPPORTED = -1,
+    UO_SP,
+    UO_MP,
+    COD_MAX_GAMES,
+};
+
 struct COD_Classic_Version {
     DWORD WinMain_Check[2];
     const char* cgamename;
@@ -91,6 +98,7 @@ struct COD_Classic_Version {
     DWORD gl_ortho_ret;
     DWORD Item_Paint;
     DWORD CG_DrawFlashImage_Draw;
+    COD_GAME game;
 };
 
 COD_Classic_Version COD_UO_SP = {
@@ -104,6 +112,7 @@ COD_Classic_Version COD_UO_SP = {
 0x004D7E02,
 0x43EE0,
 0x122BB,
+UO_SP,
 };
 
 COD_Classic_Version COD_SP = {
@@ -117,6 +126,7 @@ COD_Classic_Version COD_SP = {
 0x004BF2B2,
 0x58250,
 0x1A96B,
+UO_MP,
 };
 
 COD_Classic_Version *LoadedGame = NULL;
@@ -1143,7 +1153,7 @@ void InitHook() {
     LoadMenuConfigs();
     LoadHudShaderConfigs();
     printf("should call the cg func\n");
-    if (cg(1)) {
+    if (LoadedGame && LoadedGame->game == UO_SP) {
         printf("doing the winmain hook\n");
         //Memory::VP::InterceptCall(0x00455176, InsideWinMain, sub_431CA0);
 
