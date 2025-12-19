@@ -194,6 +194,7 @@ typedef struct {
 
     vec4_t focusColor;              // focus color for items
     vec4_t disableColor;            // focus color for items
+    char padding[32];
     itemDef_t* items[MAX_MENUITEMS]; // items this menu contains
 } menuDef_t;
 

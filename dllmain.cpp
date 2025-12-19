@@ -29,6 +29,8 @@ static std::vector<std::unique_ptr<SafetyHookMid>> g_midHooks;
 
 template<typename T, typename Fn>
 SafetyHookInline* CreateInlineHook(T target, Fn destination, SafetyHookInline::Flags flags = SafetyHookInline::Default) {
+    if (!target)
+        return NULL;
     auto hook = std::make_unique<SafetyHookInline>(safetyhook::create_inline(target, destination, flags));
     auto* ptr = hook.get();
     g_inlineHooks.push_back(std::move(hook));
@@ -37,6 +39,8 @@ SafetyHookInline* CreateInlineHook(T target, Fn destination, SafetyHookInline::F
 
 template<typename T>
 SafetyHookMid* CreateMidHook(T target, safetyhook::MidHookFn destination, safetyhook::MidHook::Flags flags = safetyhook::MidHook::Default) {
+    if (!target)
+        return NULL;
     auto hook = std::make_unique<SafetyHookMid>(safetyhook::create_mid(target, destination, flags));
     auto* ptr = hook.get();
     g_midHooks.push_back(std::move(hook));
@@ -77,6 +81,8 @@ cvar_t* safeArea_horizontal;
 cvar_t* r_noborder;
 void codDLLhooks(HMODULE handle);
 
+void ui_hooks(HMODULE handle);
+
 unsigned int x_modded = 1920;
 
 typedef HMODULE(__cdecl* LoadsDLLsT)(const char* a1, FARPROC* a2, int a3);
@@ -92,6 +98,7 @@ enum COD_GAME {
 struct COD_Classic_Version {
     DWORD WinMain_Check[2];
     const char* cgamename;
+    const char* uixname;
     DWORD LoadDLLAddr;
     DWORD DLL_CG_GetViewFov_offset;
     DWORD Cvar_Get_Addr;
@@ -106,6 +113,7 @@ struct COD_Classic_Version {
 COD_Classic_Version COD_UO_SP = {
 {0x00455050,0x83EC8B55},
 "uo_cgamex86.dll",
+"uo_uix86.dll",
 0x454440,
 0x2CC20,
 0x004337F0,
@@ -120,6 +128,7 @@ UO_SP,
 COD_Classic_Version COD_SP = {
 {0x0046C5C0,0x83EC8B55},
 "uo_cgame_mp_x86.dll",
+"uo_mp_uix86.dll",
 0x452190,
 0x3FFC0,
 0x43D9E0,
@@ -134,10 +143,12 @@ UO_MP,
 COD_Classic_Version *LoadedGame = NULL;
 
 uintptr_t cg_game_offset = 0;
-
+uintptr_t ui_offset = 0;
 
 #define CGAME_OFF(x) (cg_game_offset + (x - 0x30000000))
 #define GAME_OFF(x) (game_mp + (x - 0x20000000))
+
+#define UI_OFF(x) (ui_offset + (x - 0x40000000))
 
 uintptr_t cg(uintptr_t CODUOSP, uintptr_t CODUOMP = 0) {
 
@@ -156,6 +167,31 @@ uintptr_t cg(uintptr_t CODUOSP, uintptr_t CODUOMP = 0) {
     }
     return result;
 
+}
+
+uintptr_t ui(uintptr_t CODUOSP, uintptr_t CODUOMP = 0) {
+
+    if (ui_offset == NULL)
+        return NULL;
+
+    uintptr_t result = 0;
+
+    if (LoadedGame == &COD_SP) {
+        result = CODUOMP;
+    }
+    else result = CODUOSP;
+
+    if (result >= 0x40000000) {
+        result = UI_OFF(result);
+    }
+    return result;
+
+}
+
+void trap_R_SetColor(float* rgba) {
+    auto ptr = cg(0x3002A750);
+    if (ptr)
+        cdecl_call<void>(ptr, rgba);
 }
 
 uintptr_t exe(uintptr_t CODUOSP, uintptr_t CODUOMP = 0) {
@@ -349,6 +385,9 @@ HMODULE __stdcall LoadLibraryHook(const char* filename) {
     if (strstr(filename, LoadedGame->cgamename) != NULL) {
         codDLLhooks(hModule);
     }
+    else if (strstr(filename, LoadedGame->uixname) != NULL) {
+        ui_hooks(hModule);
+    }
 
     return hModule;
 
@@ -411,7 +450,7 @@ float get_safeArea_horizontal() {
 
     float printing = safeArea_horizontal != 0 ? safeArea_horizontal->value : 1.f;
 
-    printf("SafeArea cvar ptr %p %f\n", safeArea_horizontal, printing);
+    //printf("SafeArea cvar ptr %p %f\n", safeArea_horizontal, printing);
 
     if (!safeArea_horizontal)
         return 1.f;
@@ -524,6 +563,32 @@ SafetyHookMid* DrawHudElemMaterial_mid{};
 
 uintptr_t DrawStretch_og{};
 
+int __cdecl DrawStretch_ui(float x, float y, float width, float height, float* a5) {
+
+    int result = 0;
+    x -= process_width();
+    width += process_width() * 2.0f;
+    auto ptr = ui(0x40007960);
+    if (ptr) {
+        result = cdecl_call<int>(ptr, x, y, width, height, a5);
+    }
+
+    return result;
+}
+
+int __cdecl DrawStretch_stretched(float x, float y, float width, float height, float* a5) {
+
+    int result;
+    x -= process_width();
+    width += process_width() * 2.0f;
+
+    if (DrawStretch_og) {
+        result = cdecl_call<int>(DrawStretch_og, x, y, width, height, a5);
+    }
+
+        return result;
+}
+
 int __cdecl DrawStretch_300135B0(float x, float y, float width, float height, int a5) {
 
     x -= process_width();
@@ -538,12 +603,13 @@ uintptr_t trap_R_DrawStretchPic{};
 
 float whatevers[4]{};
 
+
 void __cdecl R_DrawStretchPic_leftsniper(float x, float y, float width, float height, float unk1, float unk2, float unk3, float unk4, int image_id) {
 
 
     x = -process_widths(0.f);
     width += process_widths(0.f);
-
+    if(trap_R_DrawStretchPic)
     cdecl_call<void>(trap_R_DrawStretchPic, x, y, width, height, unk1, unk2, unk3, unk4, image_id);
 }
 
@@ -582,7 +648,9 @@ void _cdecl crosshair_render_hook(float x, float y, float width, float height, i
     cdecl_call<void>(crosshair_render_func, x, y, width, height, unk1, u1, u2, v1, rotation, shaderHandle);
 }
 
-SafetyHookInline* Item_Paint{};
+SafetyHookInline* Item_Paint_cg{};
+
+SafetyHookInline* Item_Paint_ui{};
 
 #define ALIGN_LEFT_BOTTOM   "[LB]"
 #define ALIGN_LEFT_TOP      "[LT]"
@@ -594,6 +662,7 @@ SafetyHookInline* Item_Paint{};
 #define ALIGN_TOP           "[TOP]"
 #define ALIGN_BOTTOM        "[BOTTOM]"
 #define ALIGN_STRETCH       "[STRETCH]"
+#define ALIGN_BLACKSCREEN   "[BLACKSCREEN]"
 
 // ============================================================================
 // ALIGNMENT PROCESSING FUNCTION
@@ -665,7 +734,8 @@ struct Alignment {
     uint32_t v_bottom : 1;
     uint32_t v_center : 1;
     uint32_t stretch : 1;   // For stretch behavior
-    uint32_t _unused : 25;  // Padding to 32 bits
+    uint32_t black_screen : 1;
+    uint32_t _unused : 24;  // Padding to 32 bits
 };
 
 struct MenuConfig {
@@ -717,6 +787,9 @@ Alignment ParseAlignment(const std::string& alignStr) {
     }
     else if (alignStr == ALIGN_STRETCH) {
         align.stretch = 1;
+    }
+    else if (alignStr == ALIGN_BLACKSCREEN) {
+        align.black_screen = 1;
     }
 
     return align;
@@ -837,18 +910,16 @@ bool ProcessItemAlignment_FromJSON(itemDef_t* item, const char* menuName,
     return state->wasModified;
 }
 
-// ============================================================================
-// UPDATED HOOK FUNCTION
-// ============================================================================
-void __fastcall Item_Paint_Hook(itemDef_t* item) {
+
+void __fastcall Item_Paint_Hook(itemDef_t* item, SafetyHookInline* hook, bool ui = false) {
     char textBuffer[1024];
     AlignmentState state = { 0 };
 
     const char* menuName = nullptr;
-
+    menuDef_t* menu = nullptr;
     // Get menu name
     if (item->parent) {
-        menuDef_t* menu = (menuDef_t*)item->parent;
+        menu = (menuDef_t*)item->parent;
         if (menu && menu->window.name) {
             menuName = menu->window.name;
             //printf("menuName %s\n", menuName);
@@ -863,13 +934,36 @@ void __fastcall Item_Paint_Hook(itemDef_t* item) {
         ProcessItemAlignment(item, textBuffer, sizeof(textBuffer), &state);
     }
 
+
+    auto config = FindMenuConfig(menuName);
+
+
+    if (item && item->window.name) {
+        printf("item %s\n", item->window.name);
+    }
+
+    if (config && menu && menu->items && menu->items[0] == item || item && item->window.name && (strcmp(item->window.name,"main_back_top") == 0) ) {
+        if (config && config->alignment.black_screen || item && item->window.name && (strcmp(item->window.name, "main_back_top") == 0)) {
+            static float black[4] = { 0.f,0.f,0.f,1.f };
+            ui ? DrawStretch_ui(0.f, 0.f, 640.f, 480.f, black) : DrawStretch_stretched(0.f, 0.f, 640.f, 480.f, black);
+        }
+    }
     // Call original render
-    Item_Paint->unsafe_thiscall(item);
+    hook->unsafe_thiscall(item);
+
+
 
     // Restore original state
     RestoreItemState(item, &state);
 }
 
+void __fastcall Item_Paint_cg_f(itemDef_t* item) {
+    Item_Paint_Hook(item, Item_Paint_cg,false);
+}
+
+void __fastcall Item_Paint_ui_f(itemDef_t* item) {
+    Item_Paint_Hook(item, Item_Paint_ui,true);
+}
 
 uintptr_t DrawSingleHudElem2dog = 0;
 
@@ -1066,6 +1160,13 @@ void StaticInstructionPatches(cvar_s* safeArea_horizontal_ptr = safeArea_horizon
 
 }
 
+void ui_hooks(HMODULE handle) {
+    uintptr_t OFFSET = (uintptr_t)handle;
+    ui_offset = OFFSET;
+    Item_Paint_ui = CreateInlineHook(ui(0x40015400), Item_Paint_ui_f);
+
+}
+
 void codDLLhooks(HMODULE handle) {
    // printf("run");
     uintptr_t OFFSET = (uintptr_t)handle;
@@ -1096,7 +1197,7 @@ void codDLLhooks(HMODULE handle) {
         //    return;
         //}
 
-    Item_Paint = CreateInlineHook(OFFSET + LoadedGame->Item_Paint, Item_Paint_Hook);
+    Item_Paint_cg = CreateInlineHook(OFFSET + LoadedGame->Item_Paint, Item_Paint_cg_f);
 
     if (cg(1, 0)) {
         DrawObjectives = CreateMidHook(OFFSET + 0x12900, [](SafetyHookContext& ctx) {
@@ -1231,7 +1332,6 @@ void InitHook() {
         static auto blur_test = safetyhook::create_mid(0x4D9926, [](SafetyHookContext& ctx) {
 
             static float fuck[4]{};
-            printf("fuck %p\n", fuck);
             float* args = (float*)(ctx.esp);
 
 
@@ -1240,7 +1340,7 @@ void InitHook() {
             args[2] += process_widths() * 2.f;
 
             });
-
+        Memory::VP::Patch<int>(0x431F36, CVAR_ARCHIVE);
     }
 
     char buffer[128]{};
