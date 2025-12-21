@@ -79,8 +79,6 @@ inline Ret thiscall_call(uintptr_t addr, Args... args) {
 typedef cvar_t* (__cdecl* Cvar_GetT)(const char* var_name, const char* var_value, int flags);
 Cvar_GetT Cvar_Get = (Cvar_GetT)NULL;
 
-
-
 cvar_t* cg_fovscale;
 cvar_t* cg_fovfixaspectratio;
 cvar_t* cg_fixaspect;
@@ -88,6 +86,10 @@ cvar_t* safeArea_horizontal;
 cvar_t* r_noborder;
 cvar_t* r_mode_auto;
 cvar_t* player_sprintmult;
+
+cvar_t* hook_shortversion;
+
+cvar_t* hook_version;
 
 cvar_t* r_ext_texture_filter_anisotropic;
 
@@ -255,7 +257,7 @@ uintptr_t sp_mp(uintptr_t CODUOSP, uintptr_t CODUOMP = 0) {
 }
 
 cvar_s* __cdecl Cvar_Find(const char* a1) {
-    return cdecl_call<cvar_s*>(exe(0x00433700));
+    return cdecl_call<cvar_s*>(0x00433700,a1);
 }
 
 void trap_R_SetColor(float* rgba) {
@@ -1440,6 +1442,8 @@ int r_vidModes_count = 0;
 int r_vidModes_menu_count = 0;
 
 void InitializeDisplayModesForGame() {
+    if (!sp_mp(1))
+        return;
     InitializeDisplayModes();
 
     r_vidModes_count = r_vidModes_dynamic.size();
@@ -1462,30 +1466,55 @@ void InitializeDisplayModesForGame() {
 }
 
 void ui_hooks(HMODULE handle) {
-    uintptr_t OFFSET = (uintptr_t)handle;
-    ui_offset = OFFSET;
-    Item_Paint_ui = CreateInlineHook(ui(0x40015400), Item_Paint_ui_f);
-    CreateMidHook(ui(0x40017330), [](SafetyHookContext& ctx) {
-        itemDef_s* item = *(itemDef_s**)(ctx.esp + 0x42C);
-        if (item) {
-            if (item->cvar && !strcmp("ui_r_mode", item->cvar)) {
-                printf("cvar %s\n", item->cvar);
-                multiDef_t* multiPtr = (multiDef_t*)sp_mp((uintptr_t)item->typeData, item->cursorPos);
-                if (multiPtr) {
-                    multiPtr->count = 0;
-                    // Use the menu-specific array (already limited to MAX_MULTI_CVARS)
-                    for (int i = 0; i < r_vidModes_menu_count; i++) {
-                        multiPtr->cvarList[multiPtr->count] = String_Alloc_ui(r_vidModes_menu[i].description);
-                        multiPtr->cvarValue[multiPtr->count] = r_vidModes_menu[i].r_mode_setting;
-                        multiPtr->count++;
-                    }
-                }
-            }
+    if (sp_mp(1)) {
+        auto cvar_version = Cvar_Find("shortversion");
+
+        if (cvar_version && cvar_version->string) {
+            char buffer[128]{};
+            sprintf_s(buffer, sizeof(buffer), "%s CCH r%d %s", cvar_version->string, BUILD_NUMBER, COMMIT_HASH);
+            hook_shortversion = Cvar_Get("hook_shortversion", buffer, CVAR_ROM);
         }
-        });
+
+        uintptr_t OFFSET = (uintptr_t)handle;
+        ui_offset = OFFSET;
+        Item_Paint_ui = CreateInlineHook(ui(0x40015400), Item_Paint_ui_f);
+        CreateMidHook(ui(0x40017330), [](SafetyHookContext& ctx) {
+            itemDef_s* item = *(itemDef_s**)(ctx.esp + 0x42C);
+            if (item) {
+                if (item->cvar && !strcmp("ui_r_mode", item->cvar)) {
+                    printf("cvar %s\n", item->cvar);
+                    multiDef_t* multiPtr = (multiDef_t*)sp_mp((uintptr_t)item->typeData, item->cursorPos);
+                    if (multiPtr) {
+                        multiPtr->count = 0;
+                        // Use the menu-specific array (already limited to MAX_MULTI_CVARS)
+                        for (int i = 0; i < r_vidModes_menu_count; i++) {
+                            multiPtr->cvarList[multiPtr->count] = String_Alloc_ui(r_vidModes_menu[i].description);
+                            multiPtr->cvarValue[multiPtr->count] = r_vidModes_menu[i].r_mode_setting;
+                            multiPtr->count++;
+
+                            if (multiPtr->count >= MAX_MULTI_CVARS)
+                                break;
+
+                        }
+                    }
+
+
+                }
+
+                if (hook_shortversion && item->cvar && !strcmp("shortversion", item->cvar)) {
+
+                    item->cvar = String_Alloc_ui("hook_shortversion");
+
+                }
+
+            }
+            });
+    }
 }
 
 void game_hooks(HMODULE handle) {
+    if(!sp_mp(1))
+        return;
     uintptr_t OFFSET = (uintptr_t)handle;
     game_offset = OFFSET;
     Memory::VP::Nop(g(0x200306C8), 5);
@@ -1711,7 +1740,15 @@ int __stdcall qglTexParameteri_aniso_hook2(int a1, int a2, int a3) {
 
 }
 
+SafetyHookInline com_initd;
 
+int __cdecl com_init_hook() {
+    auto result = com_initd.unsafe_ccall<int>();
+
+
+    return result;
+
+}
 
 void InitHook() {
     CheckGame();
@@ -1721,6 +1758,8 @@ void InitHook() {
     }
 
     InitializeDisplayModesForGame();
+
+    //com_initd = safetyhook::create_inline(exe(0x00431CA0, 0x0043BC10), com_init_hook);
 
     if (sp_mp(1)) {
 
@@ -1818,7 +1857,7 @@ void InitHook() {
 
     Memory::VP::InjectHook(0x00411757, Con_DrawConsole);
 
-    SCR_AdjustFrom640_OG = safetyhook::create_inline(0x411070, SCR_AdjustFrom640);
+    //SCR_AdjustFrom640_OG = safetyhook::create_inline(0x411070, SCR_AdjustFrom640);
 
     LoadLibraryD = safetyhook::create_inline(LoadLibraryA, LoadLibraryHook);
 
