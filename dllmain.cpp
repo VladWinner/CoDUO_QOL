@@ -1661,11 +1661,20 @@ void codDLLhooks(HMODULE handle) {
         // Check if shader has a config
         const HudShaderConfig* shaderConfig = FindHudShaderConfig(hud_elem_shader_name);
 
-        float* x = (float*)(ctx.esi);
-        float& y = *(float*)(ctx.esp + 0x10);
-        float& width = *(float*)(ctx.esp + 0x18);
-        float& height = *(float*)(ctx.esp + 0x14);
 
+
+
+        float* x = (float*)(ctx.esi);
+        float* y = (float*)(ctx.esp + 0x10);
+        float* width = (float*)(ctx.esp + 0x18);
+        float* height = (float*)(ctx.esp + 0x14);
+        
+        if (sp_mp(0, 1)) {
+            y = (float*)(ctx.esp + 0x14);
+            height = (float*)(ctx.esp + 0x10);
+        }
+
+        printf("x: %f y %f width %f height %f\n", *x, *y, *width, *height);
         auto isAlignX = [elem](const alignx_e alig_type) {
             if (!elem) {
                 return false;
@@ -1689,17 +1698,17 @@ void codDLLhooks(HMODULE handle) {
 
         bool is_black_screen = (strcmp(hud_elem_shader_name, "black") == 0);
 
-        bool shouldStretch = (is_black_screen && (width >= 640 && height >= 480)) ||
+        bool shouldStretch = (is_black_screen && (*width >= 640 && *height >= 480)) ||
             (shaderConfig && shaderConfig->alignment.stretch);
         if (shouldStretch) {
 
             *x += -process_width();
 
             static float fuckthis[2]{};
-            width += fuckthis[0];
-            height += fuckthis[1];
+            *width += fuckthis[0];
+            *height += fuckthis[1];
 
-            width *= (GetAspectRatio_standardfix() * 2.f);
+            *width *= (GetAspectRatio_standardfix() * 2.f);
         }
         // Apply alignment-based adjustments from config
         else if (shaderConfig) {
@@ -1716,10 +1725,10 @@ void codDLLhooks(HMODULE handle) {
             }
             float height_hack = process_height_hack_safe() * 0.5f;
             if (shaderConfig->alignment.v_bottom && !isAlignY(ALIGNY_BOTTOM) && !is_black_screen) {
-                y -= height_hack;
+                *y -= height_hack;
             }
             else if (shaderConfig->alignment.v_top && !isAlignY(ALIGNY_TOP) && !is_black_screen) {
-                y += height_hack;
+                *y += height_hack;
             }
 
             // Add vertical when ready
