@@ -97,7 +97,7 @@ cvar_t* g_save_allowbadchecksum;
 cvar_t* cg_fov;
 cvar_t* cg_fovscale_ads;
 cevar_t* cg_fov_fix_lowfovads;
-cvar_t* cg_fovMin;
+cevar_t* cg_fovMin;
 cvar_t* cg_fovscale;
 cvar_t* cg_fovfixaspectratio;
 cevar_t* cg_fixaspect;
@@ -312,8 +312,8 @@ double GetAspectRatio_standardfix() {
 double CG_GetViewFov_hook() {
     double fov = CG_GetViewFov_og_S->call<double>();
 
-    if (cg_fovMin && (cg_fovMin->value - fov) > 0.f) {
-        fov = cg_fovMin->value;
+    if (cg_fovMin && cg_fovMin->base && (cg_fovMin->base->value - fov) > 0.f) {
+        fov = cg_fovMin->base->value;
     }
 
     if (cg_fovscale && cg_fovscale->value) {
@@ -703,7 +703,10 @@ int Cvar_Init_hook() {
     auto result = cdecl_call<int>(cvar_init_og);
 
 
-    cg_fovMin = Cvar_Get((char*)"cg_fovMin", "1.0", CVAR_ARCHIVE);
+    cg_fovMin = Cevar_Get("cg_fovMin", 1.f, CVAR_ARCHIVE, 1.f, 160.f);
+
+    Cevar_Get("cg_fov", 80.f, CVAR_ARCHIVE, 1.f, 160.f);
+
     cg_fovscale = Cvar_Get((char*)"cg_fovscale", "1.0", CVAR_ARCHIVE);
     cg_fovscale_ads = Cvar_Get((char*)"cg_fovscale_ads", "1.0", CVAR_ARCHIVE);
 
@@ -1857,6 +1860,11 @@ void codDLLhooks(HMODULE handle) {
 
 SafetyHookInline Cvar_Set_og;
 cvar_s* __cdecl Cvar_Set(const char* cvar_name, const char* value, BOOL force) {
+
+    if (_stricmp(cvar_name, "cg_fov") == 0) {
+        printf("CG_FOV from %p %s\n", _ReturnAddress(), value);
+    }
+
     if (!cvar_name || !value) {
         return Cvar_Set_og.ccall<cvar_s*>(cvar_name, value, force);
     }
