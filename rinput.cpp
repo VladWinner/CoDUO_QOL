@@ -38,6 +38,7 @@ namespace rinput {
 
 			POINT cursorPos;
 			GetCursorPos(&cursorPos);
+			SetCursorPos(*window_center_x, *window_center_y);
 			return MessageMouse_454590(3, delta_x, delta_y, 0, 0);
 		}
 		else {
@@ -103,10 +104,13 @@ namespace rinput {
 		Memory::VP::Read(exe(0x454992 + 1, 0x46BF01 + 1), MainWndProc_addr);
 		Memory::VP::Patch<void*>(exe(0x454992 + 1, 0x46BF01 + 1), stub_MainWndProc);
 
-		window_center_x = (uint32_t*)0x8EF7D8;
-		window_center_y = (uint32_t*)0x8EF668;
+		auto pattern = hook::pattern("8B 15 ? ? ? ? 51 52 FF 15 ? ? ? ? 8B 0D ? ? ? ? ? ? ? 8B 15");
+		if (!pattern.empty()) {
+			window_center_x = *(uint32_t**)pattern.get_first(2);
+			window_center_y = *(uint32_t**)pattern.get_first(-4);
 
-		auto pattern = hook::pattern("A1 ? ? ? ? 85 C0 74 ? A1 ? ? ? ? 85 C0 74 ? C7 05 ? ? ? ? 00 00 00 00 E9 ? ? ? ? E8");
+		}
+		 pattern = hook::pattern("A1 ? ? ? ? 85 C0 74 ? A1 ? ? ? ? 85 C0 74 ? C7 05 ? ? ? ? 00 00 00 00 E9 ? ? ? ? E8");
 
 		if (!pattern.empty()) {
 			static auto clear_rawinput = safetyhook::create_mid(pattern.get_first(), [](SafetyHookContext& ctx) {

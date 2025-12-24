@@ -20,6 +20,8 @@ typedef struct cvar_s
 
 typedef void (*CvarCallback)(cvar_t* cvar, const char* oldValue);
 
+cvar_s* __cdecl Cvar_Find(const char* a1);
+
 struct cevar_limits {
     union {
         struct {
@@ -57,6 +59,12 @@ inline cevar_t* Cevar_FromCvar(cvar_t* cvar) {
         return it->second;
     }
     return nullptr;
+}
+
+inline cevar_t* Cevar_FromCvar(const char* cvar_name) {
+    if (!cvar_name) return nullptr;
+    cvar_t* cvar = Cvar_Find(cvar_name);
+    return Cevar_FromCvar(cvar);  // Call the pointer overload
 }
 
 // ============================================================================
