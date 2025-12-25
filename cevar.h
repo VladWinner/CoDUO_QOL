@@ -64,7 +64,7 @@ inline cevar_t* Cevar_FromCvar(cvar_t* cvar) {
 inline cevar_t* Cevar_FromCvar(const char* cvar_name) {
     if (!cvar_name) return nullptr;
     cvar_t* cvar = Cvar_Find(cvar_name);
-    return Cevar_FromCvar(cvar);  // Call the pointer overload
+    return Cevar_FromCvar(cvar);
 }
 
 // ============================================================================

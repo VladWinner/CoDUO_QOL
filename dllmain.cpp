@@ -692,7 +692,7 @@ int Cvar_Init_hook() {
 
     cg_fov_fix_lowfovads = Cevar_Get((char*)"cg_fov_fix_lowfovads", 0, CVAR_ARCHIVE,0,2);
     cg_fovfixaspectratio = Cvar_Get((char*)"cg_fixaspectFOV", "1", CVAR_ARCHIVE);
-    cg_fixaspect = Cevar_Get((char*)"cg_fixaspect", 0, CVAR_ARCHIVE,0,2, Resolution_Static_mod);
+    cg_fixaspect = Cevar_Get((char*)"cg_fixaspect", 0, CVAR_ARCHIVE,0,3, Resolution_Static_mod);
     safeArea_horizontal = Cvar_Get((char*)"safeArea_horizontal", "1.0", CVAR_ARCHIVE);
     safeArea_vertical = Cvar_Get((char*)"safeArea_vertical", "1.0", CVAR_ARCHIVE);
     printf("safearea ptr return %p size after %d\n", safeArea_horizontal, *size_cvars);
@@ -792,43 +792,48 @@ int __cdecl CG_DrawPic(float a1, float a2, float a3, float a4, int a5) {
 }
 static float adjustments[10];
 
-void _cdecl crosshair_render_hook(float x, float y, float width, float height, int unk1, float u1, float u2, float v1, float rotation, int shaderHandle) {
-    if (cg_fixaspect && cg_fixaspect->base->integer == 2) {
-        int side;
-        __asm mov side, esi
-
-        float aspect = GetAspectRatio();
-        float aspectRatio = aspect / (4.0f / 3.0f);
-
-        static float horizontal_width_mult = 1.0f;
-        static float horizontal_height_mult = 1.0f;
-        static float vertical_width_mult = 1.0f;
-        static float vertical_height_mult = 1.0f;
-        static float x_offset_mult = 0.0f;  // Try 0 first (no centering)
-        static float y_offset_mult = 0.0f;
-
-        float orig_width = width;
-        float orig_height = height;
-
-        bool is_horizontal = (side == 0 || side == 2);
-        if(cg_fixaspect->base->integer == 3)
-        printf("horz %p %p vert %p %p\n", &horizontal_width_mult, &horizontal_height_mult, &vertical_width_mult, &vertical_height_mult);
-
-        if (is_horizontal) {
-            width *= aspectRatio * horizontal_width_mult;
-            height *= aspectRatio * horizontal_height_mult;
-        }
-        else {
-            width *= aspectRatio * vertical_width_mult;
-            height *= aspectRatio * vertical_height_mult;
-        }
-
-        x -= ((width - orig_width) / 2.0f) * x_offset_mult;
-        y -= ((height - orig_height) / 2.0f) * y_offset_mult;
-
-        //printf("side=%d, x_off_mult=%.3f (%p), y_off_mult=%.3f (%p)\n",
-        //    side, x_offset_mult, &x_offset_mult, y_offset_mult, &y_offset_mult);
+float* cg_screenXScale;
+float* cg_screenYScale;
+void CG_AdjustFrom640(float* x, float* y, float* w, float* h) {
+    if(x)
+    *x *= *cg_screenXScale;
+    if(y)
+    *y *= *cg_screenYScale;
+    if (cg_fixaspect && cg_fixaspect->base->integer) {
+        if (w)
+            *w *= *cg_screenXScale;
+        if (h)
+            *h *= *cg_screenYScale;
     }
+}
+
+void CG_AdjustFrom640(float& x, float& y, float& w, float& h) {
+    CG_AdjustFrom640(&x,&y,&w,&h);
+}
+
+cevar_t* crosshair_scale_w;
+cevar_t* crosshair_scale_h;
+
+void _cdecl crosshair_render_hook(float x, float y, float width, float height, int unk1, float u1, float u2, float v1, float rotation, int shaderHandle) {
+    int side;
+    __asm mov side, esi
+
+    bool is_horizontal = !(side == 0 || side == 2);
+
+
+
+
+    if (is_horizontal) {
+        float temp_x = x, temp_y = y;
+        CG_AdjustFrom640(&temp_x, &temp_y, &height, &width);
+        x = temp_x + (height - width) / 2.0f;
+        y = temp_y + (width - height) / 2.0f;
+    }
+    else {
+        CG_AdjustFrom640(&x, &y, &width, &height);
+    }
+
+
     cdecl_call<void>(crosshair_render_func, x, y, width, height, unk1, u1, u2, v1, rotation, shaderHandle);
 }
 
@@ -1649,6 +1654,24 @@ void codDLLhooks(HMODULE handle) {
 
     }
 
+    static uint32_t DEFUALT_SCREEN_HEIGHT = 480;
+    static uint32_t DEFUALT_SCREEN_WIDTH = 640;
+
+    static float DEFAULT_1_0 = 1.f;
+
+    auto y_scale_ptr = cg(0x30011ED9 + 2, 0x3001A40C + 2);
+    auto x_scale_ptr = cg(0x30011F27 + 2, 0x3001A45A + 2);
+    Memory::VP::Read(y_scale_ptr, cg_screenYScale);
+
+    Memory::VP::Read(x_scale_ptr, cg_screenXScale);
+
+    Memory::VP::Patch<void*>(y_scale_ptr, &DEFAULT_1_0);
+    Memory::VP::Patch<void*>(x_scale_ptr, &DEFAULT_1_0);
+
+    Memory::VP::Patch<void*>(cg(0x30011F51 + 2,0x3001A484 + 2), &DEFUALT_SCREEN_WIDTH);
+    Memory::VP::Patch<void*>(cg(0x30011F03 + 2,0x3001A436 + 2), &DEFUALT_SCREEN_HEIGHT);
+
+
     Memory::VP::InterceptCall(cg(0x30011F68, 0x3001A49B), crosshair_render_func, crosshair_render_hook);
 
     Memory::VP::InterceptCall(cg(0x30011222, 0x30019752), trap_R_DrawStretchPic, R_DrawStretchPic_leftsniper);
@@ -2018,6 +2041,28 @@ cvar_t* Cvar_get_Hook(const char* name, const char* value, int flags) {
 
 }
 
+int cvar_show_com_printf(const char* format, const char* cvar_name, const char* cvar_value) {
+    auto cevar = Cevar_FromCvar(cvar_name);
+    int result = 0;
+    if (cevar && cevar->base) {
+        result = Com_Printf("  ^7%s = ^2%s^0", cvar_name, cvar_value);
+        
+        if (cevar && cevar->limits.has_limits) {
+            if (cevar->limits.is_float) {
+                Com_Printf(" ^3Limits:^7 %.2f ^7to^7 %.2f\n",
+                    cevar->limits.f.min, cevar->limits.f.max);
+            }
+            else {
+                Com_Printf(" ^3Limits:^7 %d ^7to^7 %d\n",
+                    cevar->limits.i.min, cevar->limits.i.max);
+            }
+        }
+        else Com_Printf("\n");
+        return result;
+    }
+    return Com_Printf(format, cvar_name, cvar_value);
+}
+
 void InitHook() {
     CheckGame();
     if (!CheckGame()) {
@@ -2027,6 +2072,8 @@ void InitHook() {
     SetProcessDPIAware();
 
     rinput::Init();
+
+    //FS_FOpenFileReadD = safetyhook::create_inline(0x423B90, FS_FOpenFileRead);
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     Cvar_getD = safetyhook::create_inline(LoadedGame->Cvar_Get_Addr, Cvar_get_Hook);
@@ -2109,16 +2156,19 @@ void InitHook() {
                 // Print limits on separate line if they exist
                 if (cevar && cevar->limits.has_limits) {
                     if (cevar->limits.is_float) {
-                        Com_Printf("  ^3Limits:^7 %.2f ^7to^7 %.2f\n",
+                        Com_Printf(" ^3Limits:^7 %.2f ^7to^7 %.2f\n",
                             cevar->limits.f.min, cevar->limits.f.max);
                     }
                     else {
-                        Com_Printf("  ^3Limits:^7 %d ^7to^7 %d\n",
+                        Com_Printf(" ^3Limits:^7 %d ^7to^7 %d\n",
                             cevar->limits.i.min, cevar->limits.i.max);
                     }
                 }
             }
             });
+
+        Memory::VP::InjectHook(exe(0x40D043, 0x40DE83), cvar_show_com_printf);
+
         // remove \n from ````"\"%s\" is:\"%s^7\" default:\"%s^7\"\n````
         Memory::VP::Patch((*(uintptr_t*)pat.get_first(-4)) +29, 0);
     }
