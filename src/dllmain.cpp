@@ -576,6 +576,8 @@ float get_safeArea_vertical_hack() {
 
 int resolution_modded[2];
 
+void StaticInstructionPatches(cvar_s* safeArea_horizontal_ptr = safeArea_horizontal, bool DLLLoad = true);
+
 void Resolution_Static_mod(cvar_s* cvar, const char* old_value = "") {
     int* res = (int*)LoadedGame->X_res_Addr;
     if (cvar && cvar->integer) {
@@ -584,6 +586,11 @@ void Resolution_Static_mod(cvar_s* cvar, const char* old_value = "") {
     else {
         resolution_modded[0] = res[0];
     }
+}
+
+void Resolution_Static_mod_cb(cvar_s* cvar, const char* old_value = "") {
+    Resolution_Static_mod(cvar, old_value);
+    StaticInstructionPatches(NULL, false);
 }
 
 float process_height_hack_safe() {
@@ -699,7 +706,7 @@ int Cvar_Init_hook() {
 
     cg_fov_fix_lowfovads = Cevar_Get((char*)"cg_fov_fix_lowfovads", 0, CVAR_ARCHIVE, 0, 2);
     cg_fovfixaspectratio = Cvar_Get((char*)"cg_fixaspectFOV", "1", CVAR_ARCHIVE);
-    cg_fixaspect = Cevar_Get((char*)"cg_fixaspect", 1, CVAR_ARCHIVE, 0, 3, Resolution_Static_mod);
+    cg_fixaspect = Cevar_Get((char*)"cg_fixaspect", 1, CVAR_ARCHIVE, 0, 3, Resolution_Static_mod_cb);
     safeArea_horizontal = Cvar_Get((char*)"safeArea_horizontal", "1.0", CVAR_ARCHIVE);
     safeArea_vertical = Cvar_Get((char*)"safeArea_vertical", "1.0", CVAR_ARCHIVE);
     printf("safearea ptr return %p size after %d\n", safeArea_horizontal, *size_cvars);
@@ -815,7 +822,7 @@ void CG_AdjustFrom640(float& x, float& y, float& w, float& h) {
     CG_AdjustFrom640(&x,&y,&w,&h);
 }
 
-
+vector2* fov_world;
 void _cdecl crosshair_render_hook(float x, float y, float width, float height, int unk1, float u1, float u2, float v1, float rotation, int shaderHandle) {
     int side;
     __asm mov side, esi
@@ -1329,7 +1336,7 @@ SafetyHookMid* DrawObjectives;
 
 SafetyHookMid* DrawMissionObjectives;
 
-void StaticInstructionPatches(cvar_s* safeArea_horizontal_ptr = safeArea_horizontal, bool DLLLoad = true) {
+void StaticInstructionPatches(cvar_s* safeArea_horizontal_ptr, bool DLLLoad) {
 
     auto safe_x = get_safeArea_horizontal();
 
@@ -1753,6 +1760,13 @@ void codDLLhooks(HMODULE handle) {
 
     if (sp_mp(0, 0)) {
 
+    }
+
+    pat = hook::pattern(handle, "? ? ? ? ? ? ? ? ? ? ? ? A1 ? ? ? ? ? ? ? ? ? ? 83 C8");
+
+    if (!pat.empty()) {
+        fov_world = *pat.get_first<vector2*>(2);
+        printf("FOV WORLD IS UHH %p\n", fov_world);
     }
 
     static uint32_t DEFUALT_SCREEN_HEIGHT = 480;
