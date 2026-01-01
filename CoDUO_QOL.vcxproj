@@ -24,6 +24,7 @@
     <ProjectGuid>{3b1efd02-ef8d-44de-8c8d-13ef1b806a52}</ProjectGuid>
     <RootNamespace>CODClassicHook</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>CoDUO_QOL</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
