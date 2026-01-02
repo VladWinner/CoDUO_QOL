@@ -16,11 +16,14 @@ jobs:
       with:
         fetch-depth: 0
         submodules: recursive
+    
     - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v1.0.2
+      uses: microsoft/setup-msbuild@v2
+    
     - name: Restore NuGet packages
       working-directory: ${{ env.GITHUB_WORKSPACE }}
       run: nuget restore ${{ env.SOLUTION_FILE_PATH }}
+    
     - name: Build solution
       working-directory: ${{ env.GITHUB_WORKSPACE }}
       run: msbuild /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=x86 ${{ env.SOLUTION_FILE_PATH }}
