@@ -2280,6 +2280,7 @@ void InitHook() {
         MessageBoxW(NULL, L"COD CLASSIC LOAD FAILED", L"Error", MB_OK | MB_ICONWARNING);
         return;
     }
+    component_loader::post_start();
     SetProcessDPIAware();
 
     rinput::Init();
