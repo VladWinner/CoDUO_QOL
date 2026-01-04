@@ -182,6 +182,7 @@ popd</Command>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\cevar.h" />
+    <ClInclude Include="src\cexception.hpp" />
     <ClInclude Include="src\framework.h" />
     <ClInclude Include="include\Hooking.Patterns.h" />
     <ClInclude Include="include\helper.hpp" />

@@ -6,6 +6,7 @@ import game;
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
 #include "utils/common.h"
+#include "cexception.hpp"
 //#include "MinHook.h"
 
 
@@ -2339,13 +2340,18 @@ void InitHook() {
     iniPaths.emplace_back(modulePath + L"update\\global.ini");
     auto nDontLoadFromDllMain = GetPrivateProfileIntW(TEXT("globalsets"), TEXT("dontloadfromdllmain"), TRUE, iniPaths);
 
+    auto UALPresent = IsUALPresent();
 
-    if (!IsUALPresent() && thisModuleFileName() != LIBRARYW) {
+    if (!UALPresent && thisModuleFileName() != LIBRARYW) {
         MessageBoxA(NULL, "It appears that Ulitmate ASI Loader is missing, it's highly recommended that you use it to load the mod, otherwise expect issues!", "CoDUO_QOL", MB_OK | MB_ICONWARNING);
     }
-    else if (IsUALPresent() && thisModuleFileName() != LIBRARYW && nDontLoadFromDllMain) {
+    else if (UALPresent && thisModuleFileName() != LIBRARYW && nDontLoadFromDllMain) {
         MessageBoxA(NULL, "Detected loading via Ultimate ASI Loader, but DontLoadFromDllMain within global.ini is set to true, which is unsupported for CoDUO_QOL and will cause issues with the steam version!, this has been automatically disabled, please restart.", "CoDUO_QOL", MB_OK | MB_ICONWARNING);
         WritePrivateProfileStringW_UAL(TEXT("globalsets"), TEXT("dontloadfromdllmain"), TEXT("0"), iniPaths);
+    }
+
+    if (!UALPresent) {
+        SetUnhandledExceptionFilter(CustomUnhandledExceptionFilter);
     }
 
 

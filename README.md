@@ -56,5 +56,7 @@ CoDUO_QOL can also be loaded using [Ultimate-ASI-Loader](https://github.com/Thir
 - [ModUtils](https://github.com/CookiePLMonster/ModUtils/tree/master)
 - [safetyhook](https://github.com/cursey/safetyhook)
 - [VladWinner](https://github.com/VladWinner) - For testing & suggestions.
+- [Ultimate-ASI-Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)
+- momo5502
 
   
