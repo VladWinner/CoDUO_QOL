@@ -13,6 +13,7 @@
 #include "GMath.h"
 #include <buildnumber.h>
 #include "framework.h"
+#include "utils/common.h"
 bool GetGameScreenRes(vector2& res);
 double process_width(double width);
 double process_widths(double width); 
@@ -35,6 +36,7 @@ namespace gui {
     cevar_s* cg_subtitle_centered_scale = nullptr;
     cevar_s* cg_subtitle_centered_spacing_multiplier = nullptr;
     cevar_s* cg_subtitle_centered_ignore_hook = nullptr;
+    cevar_s* cg_DrawPlayerStance_disable = nullptr;
 	void draw_branding() {
         if (!branding || !branding->base || !branding->base->integer)
             return;
@@ -75,6 +77,13 @@ namespace gui {
         is_subtitle_draw = false;
         return result;
     }
+    uintptr_t cg_DrawPlayerStance_ptr;
+    int __cdecl CG_DrawPlayerStance_hook(float* a1, int* a2, int a3) {
+        if (cg_DrawPlayerStance_disable->base->integer == cg_DrawPlayerStance_disable->limits.i.max)
+            return NULL;
+
+        return cdecl_call<int>(cg_DrawPlayerStance_ptr, a1, a2, a3);
+    }
 
     class component final : public component_interface
     {
@@ -101,6 +110,8 @@ namespace gui {
                 cg_subtitle_centered_y = Cevar_Get("cg_subtitle_centered_y", 0x1A9, CVAR_ARCHIVE);
 
                 cg_subtitle_centered_spacing_multiplier = Cevar_Get("cg_subtitle_centered_spacing_multiplier", 1.f, CVAR_ARCHIVE | CVAR_LATCH | CVAR_NORESTART);
+
+                cg_DrawPlayerStance_disable = Cevar_Get("cg_DrawPlayerStance_disable", 0, CVAR_ARCHIVE, 0, 2);
 
                 Memory::VP::Nop(exe(0x00409BB5, 0x0040A7C5), 8);
                 Memory::VP::InterceptCall(exe(0x0040234A, 0x0040270C), Con_DrawSubtitles_og, Con_DrawSubtitles);
@@ -171,9 +182,9 @@ namespace gui {
 
         void post_cgame() override
         {
-            HMODULE cg = (HMODULE)cg_game_offset;
+            HMODULE cgame = (HMODULE)cg_game_offset;
 
-            auto pattern = hook::pattern(cg, "52 50 8D 74 24 ? E8 ? ? ? ? 83 C4 ? 5F 5E 5B 83 C4 ? C3 8B 4C 24 ? 8B 54 24 ? 8B 44 24 ? 51");
+            auto pattern = hook::pattern(cgame, "52 50 8D 74 24 ? E8 ? ? ? ? 83 C4 ? 5F 5E 5B 83 C4 ? C3 8B 4C 24 ? 8B 54 24 ? 8B 44 24 ? 51");
 
             if (!pattern.empty()) {
                 CreateMidHook(pattern.get_first(), [](SafetyHookContext& ctx) {
@@ -189,6 +200,19 @@ namespace gui {
 
                     });
             }
+
+            Memory::VP::InterceptCall(cg(0x3002575E, 0x3003229F), cg_DrawPlayerStance_ptr, CG_DrawPlayerStance_hook);
+
+
+            CreateMidHook(cg(0x30023959, 0x3002F589), [](SafetyHookContext& ctx) {
+
+                if (cg_DrawPlayerStance_disable->base->integer == 1) {
+                    EFlags32& flags = *(EFlags32*)&ctx.eflags;
+                    flags.ZF = 1;
+                }
+
+                });
+
 
         }
 

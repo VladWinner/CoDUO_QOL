@@ -245,3 +245,4 @@ namespace game {
     WEAK symbolp<qhandle_t> cstate{ "A1 ? ? ? ? 83 E8 00",1,game::EXE,true };
     WEAK symbolp<qhandle_t> keycatchers{ "F6 05 ? ? ? ? ? 74 ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? DF E0",2,game::EXE,true };
 }
+extern void retptr();

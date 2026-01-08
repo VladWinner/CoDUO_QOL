@@ -8,6 +8,13 @@ uintptr_t ui_offset = 0;
 uintptr_t game_offset = 0;
 uint32_t* player_flags = nullptr;
 Com_PrintfT Com_Printf = (Com_PrintfT)NULL;
+
+__declspec(naked) void retptr() {
+	__asm {
+		ret
+	}
+}
+
 namespace game {
 	//void __cdecl Cmd_AddCommand(const char* command_name, void* function) {
 	//	if(exe(0x00422860))
