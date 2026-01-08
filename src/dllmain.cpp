@@ -65,6 +65,11 @@ cvar_t* g_save_allowbadchecksum;
 
 // cvars
 cvar_t* cg_fov;
+
+cvar_t* get_cg_fov() {
+    return cg_fov;
+}
+
 cvar_t* cg_fovscale_ads;
 cevar_t* cg_fov_fix_lowfovads;
 cevar_t* cg_fovMin;
@@ -286,37 +291,58 @@ double GetAspectRatio_standardfix() {
     return (GetAspectRatio() / STANDARD_ASPECT);
 }
 
+double ApplyFOVScale(double fov, double fovScale, bool useFixedAspect, bool dofovScaleMath) {
+    if (dofovScaleMath && fovScale == 0.0) {
+        fovScale = cg_fovscale->value;
+    }
+
+    if (fovScale <= 0.0) {
+        return fov; // Invalid scale, return original
+    }
+
+    if (!dofovScaleMath)
+        fovScale = 1.0;
+
+    if (dofovScaleMath)
+        fov *= fovScale;
+
+    // Convert FOV to radians
+    double halfFovRad = (fov / 2.0) * (M_PI / 180.0);
+    double tanHalfFov = tan(halfFovRad);
+
+    if (useFixedAspect) {
+        // Convert horizontal FOV to vertical, then back to horizontal with new aspect ratio
+        // Convert to vertical FOV (aspect-independent)
+        double tanHalfVFov = tanHalfFov / STANDARD_ASPECT;
+        // Apply fovscale to the tangent
+
+
+
+        double newTanHalfFov = tanHalfVFov * GetAspectRatio();
+        // Convert back to degrees
+        return (2.0 * atan(newTanHalfFov) * (180.0 / M_PI));
+    }
+    else {
+
+        return (2.0 * atan(tanHalfFov) * (180.0 / M_PI));
+    }
+}
+
 double CG_GetViewFov_hook() {
     double fov = CG_GetViewFov_og_S->call<double>();
 
+    // Apply minimum FOV constraint
     if (cg_fovMin && cg_fovMin->base && (cg_fovMin->base->value - fov) > 0.f) {
         fov = cg_fovMin->base->value;
     }
 
+    // Apply FOV scaling
     if (cg_fovscale && cg_fovscale->value) {
-        double halfFovRad = (fov / 2.0) * (M_PI / 180.0); // Convert to radians
-        double tanHalfFov = tan(halfFovRad);
-
-
-        if (cg_fixedAspectFOV && cg_fixedAspectFOV->integer) {
-            // Convert horizontal FOV to vertical, then back to horizontal with new aspect ratio
-            // Convert to vertical FOV (aspect-independent)
-            double tanHalfVFov = tanHalfFov / STANDARD_ASPECT;
-            // Apply fovscale to the tangent
-            tanHalfVFov *= cg_fovscale->value;
-            // Convert back to horizontal FOV with current aspect ratio
-            double newTanHalfFov = tanHalfVFov * GetAspectRatio();
-            // Convert back to degrees
-            fov = 2.0 * atan(newTanHalfFov) * (180.0 / M_PI);
-        }
-        else {
-            // Apply fovscale to the tangent directly
-            tanHalfFov *= cg_fovscale->value;
-            // Convert back to degrees
-            fov = 2.0 * atan(tanHalfFov) * (180.0 / M_PI);
-        }
+        bool useFixedAspect = cg_fixedAspectFOV && cg_fixedAspectFOV->integer;
+        fov = ApplyFOVScale(fov, cg_fovscale->value, useFixedAspect,true);
     }
-    
+
+    // Validate result
     if (std::isnan(fov)) {
         return cg_fov != NULL ? cg_fov->value : 80.f;
     }
