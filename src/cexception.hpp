@@ -359,6 +359,7 @@ void ExceptionTracer::PrintUnhandledException()
     if (!this->module || !GetModuleFileNameA(this->module, module_name, sizeof(module_name)))
         strcpy(module_name, "unknown");
 
+    Print(MOD_NAME " r" BUILD_NUMBER_STR " built: " BUILD_TIME_UTC " commit hash: " COMMIT_HASH "\n");
     // Log the exception in a similar format similar to debuggers format
     Print("Unhandled exception at 0x%p in %s", address, FindModuleName(module, module_name, sizeof(module_name)));
     if (module) Print(" (+0x%x)", address - (uintptr_t)(module));
