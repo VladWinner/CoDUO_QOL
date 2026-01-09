@@ -32,3 +32,11 @@ typedef struct {
         };
     };
 } EFlags32;
+
+template <size_t count = 1, typename... Args>
+inline hook::pattern find_pattern(Args... args)
+{
+    hook::pattern pattern;
+    ((pattern = hook::pattern(args), !pattern.count_hint(count).empty()) || ...);
+    return pattern;
+}
