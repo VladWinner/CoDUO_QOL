@@ -734,7 +734,7 @@ int Cvar_Init_hook() {
 
     Cevar_Get("cg_fov", 80.f, CVAR_ARCHIVE, 1.f, 160.f);
 
-    rinput::raw_input = Cevar_Get("m_rawinput", 0, CVAR_ARCHIVE, 0, 1);
+    rinput::raw_input = Cevar_Get("m_rawinput", 1, CVAR_ARCHIVE, 0, 1);
 
     cg_fovscale = Cvar_Get((char*)"cg_fovscale", "1.0", CVAR_ARCHIVE);
     cg_fovscale_ads = Cvar_Get((char*)"cg_fovscale_ads", "1.0", CVAR_ARCHIVE);
